@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vibe coding Kanban</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+</head>
+<body>
+  <script>
+    (function() {
+      var t = localStorage.getItem('theme') || 'dark';
+      if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+      document.addEventListener('DOMContentLoaded', function() {
+        var btn = document.getElementById('theme-toggle');
+        if (btn) btn.innerHTML = t === 'light' ? '<span class="btn-theme-icon">&#9728;</span> Light' : '<span class="btn-theme-icon">&#9790;</span> Dark';
+      });
+    })();
+    function toggleTheme() {
+      var isLight = document.documentElement.getAttribute('data-theme') === 'light';
+      var next = isLight ? 'dark' : 'light';
+      if (next === 'light') {
+        document.documentElement.setAttribute('data-theme', 'light');
+      } else {
+        document.documentElement.removeAttribute('data-theme');
+      }
+      localStorage.setItem('theme', next);
+      document.getElementById('theme-toggle').innerHTML = next === 'light' ? '<span class="btn-theme-icon">&#9728;</span> Light' : '<span class="btn-theme-icon">&#9790;</span> Dark';
+      if (typeof updateAllTerminalThemes === 'function') updateAllTerminalThemes();
+    }
+  </script>
+  <header>
+    <h1>🤖 Vibe coding Kanban</h1>
+    <div class="header-filters">
+      <div class="search-wrapper">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="filter-search" placeholder="Search tasks..." class="filter-input" oninput="applyFilters()">
+      </div>
+      <select id="filter-priority" class="filter-select" onchange="applyFilters()">
+        <option value="">All priorities</option>
+        <option value="high">High</option>
+        <option value="medium">Medium</option>
+        <option value="low">Low</option>
+        <option value="hold">Hold</option>
+      </select>
+      <select id="filter-project" class="filter-select" onchange="applyFilters()">
+        <option value="">All projects</option>
+      </select>
+    </div>
+    <div class="header-actions">
+      <button id="theme-toggle" class="btn btn-theme-pill" onclick="toggleTheme()" title="Toggle light/dark theme"><span class="btn-theme-icon">&#9790;</span> Dark</button>
+<button id="logs-btn" class="btn btn-logs" onclick="toggleLogsPopup()" title="Show server & client logs">Logs</button>
+<button id="auto-approve-btn" class="btn btn-auto-queue" onclick="toggleAutoApprove()" title="Auto-approve Claude Code permission prompts">Auto-approve: OFF</button>
+      <button id="start-btn" class="btn btn-auto-queue" onclick="toggleStart()" title="Start all backlog tasks with auto-queue">&#9654; Start queue</button>
+      <button id="add-task-btn" class="btn btn-primary">+ New Task</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Kanban Board -->
+    <div id="kanban">
+      <div class="column" data-column="backlog">
+        <div class="column-header">
+          <span class="column-title">Backlog</span>
+          <span class="column-count">0</span>
+          <button class="column-collapse-btn" onclick="toggleColumn('backlog')" title="Collapse/expand">‹</button>
+        </div>
+        <div class="priority-stats" data-column="backlog"></div>
+        <div class="task-list" data-column="backlog"></div>
+      </div>
+      <div class="column" data-column="in_progress">
+        <div class="column-header">
+          <span class="column-title">In Progress</span>
+          <span class="column-count">0</span>
+          <button class="column-collapse-btn" onclick="toggleColumn('in_progress')" title="Collapse/expand">‹</button>
+        </div>
+        <div class="priority-stats" data-column="in_progress"></div>
+        <div class="task-list" data-column="in_progress"></div>
+      </div>
+      <div class="column" data-column="review">
+        <div class="column-header">
+          <span class="column-title">Review</span>
+          <span class="column-count">0</span>
+          <button class="column-collapse-btn" onclick="toggleColumn('review')" title="Collapse/expand">‹</button>
+        </div>
+        <div class="priority-stats" data-column="review"></div>
+        <div class="task-list" data-column="review"></div>
+      </div>
+      <div class="column" data-column="done">
+        <div class="column-header">
+          <span class="column-title">Done</span>
+          <span class="column-count">0</span>
+          <button class="column-collapse-btn" onclick="toggleColumn('done')" title="Collapse/expand">‹</button>
+        </div>
+        <div class="priority-stats" data-column="done"></div>
+        <div class="task-list" data-column="done"></div>
+      </div>
+    </div>
+
+    <!-- Resizer -->
+    <div id="resizer"></div>
+
+    <!-- Terminal Panel -->
+    <div id="terminal-panel">
+
+      <!-- Helper Claude Code (always open) -->
+      <div id="helper-section">
+        <div class="term-header">
+          <span class="term-title">Claude Code — Helper</span>
+          <span class="term-hint">Helps you write task descriptions</span>
+        </div>
+        <div id="helper-container" class="term-container"></div>
+      </div>
+
+      <!-- Horizontal resizer -->
+      <div id="h-resizer"></div>
+
+      <!-- Task terminals (tabbed, one per project) -->
+      <div id="task-section">
+        <div class="term-header task-tabs-header">
+          <div id="task-tab-bar" class="task-tab-bar"></div>
+          <button id="add-terminal-btn" class="btn-add-terminal" onclick="window.terminalManager && window.terminalManager.addManualTerminal()" title="New terminal">+</button>
+          <div id="terminal-status"></div>
+        </div>
+        <div id="task-terminals"></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- New Task Modal -->
+  <div id="modal-overlay" class="hidden">
+    <div id="task-modal">
+      <h2 id="modal-title">New Task</h2>
+      <form id="task-form">
+        <input type="hidden" id="task-edit-id">
+        <label>Title
+          <input type="text" id="task-title" required placeholder="What needs to be done?">
+        </label>
+        <label>Description / Prompt
+          <textarea id="task-description" rows="4" placeholder="Detailed prompt for Claude Code..."></textarea>
+        </label>
+        <label>Priority
+          <select id="task-priority">
+            <option value="high">High</option>
+            <option value="medium" selected>Medium</option>
+            <option value="low">Low</option>
+            <option value="hold">Hold</option>
+          </select>
+        </label>
+        <label>Project Path
+          <input type="text" id="task-project-path" placeholder="/path/to/project" list="project-path-list" autocomplete="off">
+          <datalist id="project-path-list"></datalist>
+        </label>
+        <label style="display:none">Claude Response
+          <textarea id="task-last-response" rows="6" readonly style="background:var(--bg);color:var(--text-muted);font-family:Menlo,Monaco,monospace;font-size:11px;cursor:default;resize:vertical"></textarea>
+        </label>
+
+        <!-- Attachments -->
+        <div class="attachments-section" id="attachments-section" style="display:none">
+          <div class="attachments-label">Attachments</div>
+          <div id="attachment-list" class="attachment-list"></div>
+          <div class="attachment-add-row">
+            <div id="attach-drop-zone" class="attach-drop-zone" onclick="document.getElementById('attach-file-input').click()">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+              <span>Drop file or click to attach</span>
+            </div>
+            <input type="file" id="attach-file-input" style="display:none" multiple>
+            <div class="attach-url-row">
+              <input type="text" id="attach-url-input" class="attach-url-input" placeholder="https://... (link)">
+              <button type="button" class="btn btn-sm" onclick="attachAddUrl()">Add</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn" id="modal-cancel">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="modal-submit">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Return Task Popup -->
+  <div id="return-popup" class="return-popup hidden">
+    <div class="return-popup-header">
+      <span class="return-popup-title">↩ Return Task</span>
+      <button class="return-popup-close" onclick="closeReturnModal()">&times;</button>
+    </div>
+    <input type="hidden" id="return-task-id">
+    <div class="return-task-name" id="return-task-title"></div>
+    <div class="return-prev-response-wrapper" style="display:none">
+      <label>Previous Claude Response</label>
+      <pre class="return-prev-response" id="return-prev-response"></pre>
+    </div>
+    <label class="return-popup-label">Updated Prompt
+      <textarea id="return-prompt" rows="4" placeholder="Edit the prompt for re-run..."></textarea>
+    </label>
+    <div class="return-popup-actions">
+      <button type="button" class="btn btn-sm" onclick="closeReturnModal()">Cancel</button>
+      <button type="button" class="btn btn-sm btn-primary" onclick="submitReturn()">↩ Re-run</button>
+    </div>
+  </div>
+
+  <!-- Logs popup -->
+  <div id="logs-overlay" class="hidden" onclick="if(event.target===this)toggleLogsPopup()">
+    <div id="logs-popup">
+      <div class="logs-header">
+        <h3>Logs</h3>
+        <div class="logs-actions">
+          <button class="btn btn-sm" onclick="clearLogs()">Clear</button>
+          <button class="btn btn-sm" onclick="toggleLogsPopup()">&times;</button>
+        </div>
+      </div>
+      <div id="logs-content"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-unicode11@0.8.0/lib/addon-unicode11.min.js"></script>
+  <script src="app.js"></script>
+  <script src="terminal.js"></script>
+</body>
+</html>

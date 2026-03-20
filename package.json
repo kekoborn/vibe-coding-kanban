@@ -1,0 +1,40 @@
+{
+  "name": "claude-kanban",
+  "version": "0.1.0",
+  "description": "Vibe coding kanban for Claude Code — orchestrate AI coding sessions with auto-queue, rate-limit recovery, and real-time terminals",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "kanban",
+    "orchestrator",
+    "ai-coding",
+    "vibe-coding",
+    "task-management",
+    "terminal",
+    "node-pty",
+    "xterm"
+  ],
+  "author": "kekoborn",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kekoborn/claude-kanban.git"
+  },
+  "homepage": "https://github.com/kekoborn/claude-kanban#readme",
+  "bugs": {
+    "url": "https://github.com/kekoborn/claude-kanban/issues"
+  },
+  "dependencies": {
+    "@lydell/node-pty": "^1.2.0-beta.3",
+    "better-sqlite3": "^11.0.0",
+    "express": "^4.21.0",
+    "glob": "^13.0.6",
+    "multer": "^2.1.1",
+    "ws": "^8.18.0"
+  }
+}

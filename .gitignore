@@ -1,0 +1,9 @@
+node_modules/
+kanban.db
+uploads/
+*.db-journal
+*.db-wal
+*.db-shm
+.DS_Store
+.claude/
+.env
