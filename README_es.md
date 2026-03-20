@@ -12,7 +12,7 @@
 
 Agrega tus tareas, presiona Iniciar, y deja que Claude Code las ejecute una por una. ¿Límite de velocidad alcanzado? El tablero lo detecta, muestra una cuenta regresiva y continúa automáticamente cuando se restablece.
 
-<video src="https://github.com/kekoborn/vibe-coding-kanban/raw/main/preview.mp4" controls width="100%"></video>
+<video src="https://github.com/user-attachments/assets/7619b292-83b5-4b10-962b-0accee73841b" controls width="100%"></video>
 
 ---
 

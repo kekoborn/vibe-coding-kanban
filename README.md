@@ -12,7 +12,7 @@
 
 Queue your tasks, press Start, and let Claude Code work through them one by one. Rate limit hits? The board detects it, shows a countdown, and resumes automatically when ready.
 
-<video src="https://github.com/kekoborn/vibe-coding-kanban/raw/main/preview.mp4" controls width="100%"></video>
+<video src="https://github.com/user-attachments/assets/7619b292-83b5-4b10-962b-0accee73841b" controls width="100%"></video>
 
 ---
 
