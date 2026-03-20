@@ -12,7 +12,7 @@
 
 Добавляйте задачи, нажимайте «Старт» — и Claude Code выполняет их по очереди. Достигли rate limit? Доска обнаружит это, покажет обратный отсчёт и автоматически продолжит работу когда лимит сбросится.
 
-<video src="https://github.com/kekoborn/vibe-coding-kanban/releases/download/v0.1.0/kanban.preview.mp4" controls width="100%"></video>
+<video src="https://github.com/kekoborn/vibe-coding-kanban/raw/main/preview.mp4" controls width="100%"></video>
 
 ---
 

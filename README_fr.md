@@ -12,7 +12,7 @@
 
 Ajoutez vos tâches, appuyez sur Démarrer, et laissez Claude Code les traiter une par une. Limite de débit atteinte ? Le tableau la détecte, affiche un compte à rebours et reprend automatiquement dès la réinitialisation.
 
-<video src="https://github.com/kekoborn/vibe-coding-kanban/releases/download/v0.1.0/kanban.preview.mp4" controls width="100%"></video>
+<video src="https://github.com/kekoborn/vibe-coding-kanban/raw/main/preview.mp4" controls width="100%"></video>
 
 ---
 
