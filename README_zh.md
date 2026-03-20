@@ -12,7 +12,7 @@
 
 添加任务，点击开始，让 Claude Code 逐一完成。遇到速率限制？看板会自动检测，显示倒计时，并在限制重置后自动恢复。
 
-> 📸 截图即将发布。**点击 Star** 以获取通知！
+<video src="https://github.com/kekoborn/vibe-coding-kanban/releases/download/v0.1.0/kanban.preview.mp4" controls width="100%"></video>
 
 ---
 
@@ -50,8 +50,8 @@
 ## 快速开始
 
 ```bash
-git clone https://github.com/kekoborn/claude-kanban.git
-cd claude-kanban
+git clone https://github.com/kekoborn/vibe-coding-kanban.git
+cd vibe-coding-kanban
 npm install
 npm start
 ```

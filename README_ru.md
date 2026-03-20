@@ -12,7 +12,7 @@
 
 Добавляйте задачи, нажимайте «Старт» — и Claude Code выполняет их по очереди. Достигли rate limit? Доска обнаружит это, покажет обратный отсчёт и автоматически продолжит работу когда лимит сбросится.
 
-> 📸 Скриншоты скоро появятся. **Поставьте звёздочку**, чтобы не пропустить!
+<video src="https://github.com/kekoborn/vibe-coding-kanban/releases/download/v0.1.0/kanban.preview.mp4" controls width="100%"></video>
 
 ---
 
@@ -50,8 +50,8 @@
 ## Быстрый старт
 
 ```bash
-git clone https://github.com/kekoborn/claude-kanban.git
-cd claude-kanban
+git clone https://github.com/kekoborn/vibe-coding-kanban.git
+cd vibe-coding-kanban
 npm install
 npm start
 ```

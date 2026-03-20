@@ -12,7 +12,7 @@
 
 Agrega tus tareas, presiona Iniciar, y deja que Claude Code las ejecute una por una. ¿Límite de velocidad alcanzado? El tablero lo detecta, muestra una cuenta regresiva y continúa automáticamente cuando se restablece.
 
-> 📸 Capturas de pantalla próximamente. **Dale una estrella** para recibir notificaciones.
+<video src="https://github.com/kekoborn/vibe-coding-kanban/releases/download/v0.1.0/kanban.preview.mp4" controls width="100%"></video>
 
 ---
 
@@ -50,8 +50,8 @@ Agrega tus tareas, presiona Iniciar, y deja que Claude Code las ejecute una por 
 ## Inicio rápido
 
 ```bash
-git clone https://github.com/kekoborn/claude-kanban.git
-cd claude-kanban
+git clone https://github.com/kekoborn/vibe-coding-kanban.git
+cd vibe-coding-kanban
 npm install
 npm start
 ```

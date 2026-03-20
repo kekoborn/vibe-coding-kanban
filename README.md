@@ -12,7 +12,7 @@
 
 Queue your tasks, press Start, and let Claude Code work through them one by one. Rate limit hits? The board detects it, shows a countdown, and resumes automatically when ready.
 
-> 📸 Screenshots coming soon. **Star the repo** to get notified when they drop!
+<video src="https://github.com/kekoborn/vibe-coding-kanban/releases/download/v0.1.0/kanban.preview.mp4" controls width="100%"></video>
 
 ---
 
@@ -50,8 +50,8 @@ Queue your tasks, press Start, and let Claude Code work through them one by one.
 ## Quick Start
 
 ```bash
-git clone https://github.com/kekoborn/claude-kanban.git
-cd claude-kanban
+git clone https://github.com/kekoborn/vibe-coding-kanban.git
+cd vibe-coding-kanban
 npm install
 npm start
 ```

@@ -12,7 +12,7 @@
 
 Ajoutez vos tâches, appuyez sur Démarrer, et laissez Claude Code les traiter une par une. Limite de débit atteinte ? Le tableau la détecte, affiche un compte à rebours et reprend automatiquement dès la réinitialisation.
 
-> 📸 Captures d'écran à venir. **Mettez une étoile** pour être notifié !
+<video src="https://github.com/kekoborn/vibe-coding-kanban/releases/download/v0.1.0/kanban.preview.mp4" controls width="100%"></video>
 
 ---
 
@@ -50,8 +50,8 @@ Ajoutez vos tâches, appuyez sur Démarrer, et laissez Claude Code les traiter u
 ## Démarrage rapide
 
 ```bash
-git clone https://github.com/kekoborn/claude-kanban.git
-cd claude-kanban
+git clone https://github.com/kekoborn/vibe-coding-kanban.git
+cd vibe-coding-kanban
 npm install
 npm start
 ```
