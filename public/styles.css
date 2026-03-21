@@ -156,6 +156,12 @@ header h1 {
   gap: 8px;
 }
 
+.header-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .btn-theme-pill {
   background: var(--surface);
   border-color: var(--border);
@@ -990,8 +996,17 @@ body.resizing #resizer {
 #helper-section {
   flex: 1;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   min-height: 100px;
+  overflow: hidden;
+}
+
+#helper-terminal-wrapper {
+  flex: 2;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
 }
 
 #task-section {
@@ -1809,9 +1824,13 @@ body.h-resizing #h-resizer {
 
 /* Kanban Lead panel */
 #kanban-lead-panel {
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  flex-shrink: 0;
+  flex: 1;
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--primary) 6%, var(--surface));
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  min-width: 0;
 }
 
 .kl-header {
@@ -1819,8 +1838,8 @@ body.h-resizing #h-resizer {
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  border-bottom: 1px solid color-mix(in srgb, var(--primary) 20%, var(--border));
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface));
 }
 
 .kl-title {
@@ -1858,6 +1877,13 @@ body.h-resizing #h-resizer {
 }
 
 .kl-body.hidden { display: none; }
+
+.kl-description {
+  margin: 0 0 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
 
 .kl-input {
   width: 100%;

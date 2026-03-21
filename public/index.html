@@ -50,16 +50,20 @@
       </select>
     </div>
     <div class="header-actions">
-      <button id="theme-toggle" class="btn btn-theme-pill" onclick="toggleTheme()" title="Toggle light/dark theme"><span class="btn-theme-icon">&#9790;</span> Dark</button>
-<button id="logs-btn" class="btn btn-logs" onclick="toggleLogsPopup()" title="Show server & client logs">Logs</button>
-<div class="max-terminals-control" title="Максимум одновременных терминалов (∞ = без ограничений)">
-  <button class="max-terminals-btn" onclick="setMaxTerminals(maxTerminals <= 1 ? 0 : maxTerminals - 1)" title="Уменьшить">−</button>
-  <span class="max-terminals-label">Терм:</span>
-  <span id="max-terminals-display" class="max-terminals-display">∞</span>
-  <button class="max-terminals-btn" onclick="setMaxTerminals(maxTerminals === 0 ? 1 : maxTerminals + 1)" title="Увеличить">+</button>
-</div>
-<button id="auto-approve-btn" class="btn btn-auto-queue" onclick="toggleAutoApprove()" title="Auto-approve Claude Code permission prompts">Auto-approve: OFF</button>
-      <button id="start-btn" class="btn btn-auto-queue" onclick="toggleStart()" title="Start all backlog tasks with auto-queue">&#9654; Start queue</button>
+      <div class="header-group">
+        <button id="theme-toggle" class="btn btn-theme-pill" onclick="toggleTheme()" title="Toggle light/dark theme"><span class="btn-theme-icon">&#9790;</span> Dark</button>
+        <button id="logs-btn" class="btn btn-logs" onclick="toggleLogsPopup()" title="Show server & client logs">Logs</button>
+        <div class="max-terminals-control" title="Max concurrent terminals (∞ = unlimited)">
+          <button class="max-terminals-btn" onclick="setMaxTerminals(maxTerminals <= 1 ? 0 : maxTerminals - 1)" title="Decrease">−</button>
+          <span class="max-terminals-label">Terms:</span>
+          <span id="max-terminals-display" class="max-terminals-display">∞</span>
+          <button class="max-terminals-btn" onclick="setMaxTerminals(maxTerminals === 0 ? 1 : maxTerminals + 1)" title="Increase">+</button>
+        </div>
+      </div>
+      <div class="header-group">
+        <button id="auto-approve-btn" class="btn btn-auto-queue" onclick="toggleAutoApprove()" title="Auto-approve Claude Code permission prompts">Auto-approve: OFF</button>
+        <button id="start-btn" class="btn btn-auto-queue" onclick="toggleStart()" title="Start all backlog tasks with auto-queue">&#9654; Start queue</button>
+      </div>
       <button id="add-task-btn" class="btn btn-primary">+ New Task</button>
     </div>
   </header>
@@ -117,21 +121,24 @@
           <div class="kl-header">
             <span class="kl-title">Kanban Lead</span>
             <span class="kl-hint" id="kl-skill-hint"></span>
-            <button class="kl-toggle" id="kl-toggle" onclick="toggleKanbanLeadPanel()" title="Свернуть/развернуть">▲</button>
+            <button class="kl-toggle" id="kl-toggle" onclick="toggleKanbanLeadPanel()" title="Collapse/expand">▲</button>
           </div>
           <div class="kl-body" id="kl-body">
+            <p class="kl-description">Describe what needs to be done — Kanban Lead will break it into steps and add cards to the backlog.</p>
             <input type="text" id="kl-project" class="kl-input" placeholder="/path/to/project" list="project-path-list" autocomplete="off">
-            <textarea id="kl-prompt" class="kl-textarea" rows="3" placeholder="Что нужно сделать? Опиши задачи, которые нужно создать..."></textarea>
+            <textarea id="kl-prompt" class="kl-textarea" rows="3" placeholder="What needs to be done? Describe the tasks to create..."></textarea>
             <div class="kl-actions">
-              <button class="btn btn-primary kl-submit" id="kl-submit" onclick="submitKanbanLead()">Добавить задачи</button>
+              <button class="btn btn-primary kl-submit" id="kl-submit" onclick="submitKanbanLead()">Add tasks</button>
             </div>
           </div>
         </div>
-        <div class="term-header">
-          <span class="term-title">Claude Code — Helper</span>
-          <span class="term-hint">Помогает формулировать задачи</span>
+        <div id="helper-terminal-wrapper">
+          <div class="term-header">
+            <span class="term-title">Claude Code — Helper</span>
+            <span class="term-hint">Helps plan and create tasks</span>
+          </div>
+          <div id="helper-container" class="term-container"></div>
         </div>
-        <div id="helper-container" class="term-container"></div>
       </div>
 
       <!-- Horizontal resizer -->

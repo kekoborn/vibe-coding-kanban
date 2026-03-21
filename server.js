@@ -57,6 +57,7 @@ const termTaskCounter = new Map(); // termId -> number of tasks completed (for /
 const COMPACT_EVERY_N_TASKS = 10; // send /compact after every N tasks
 const IDLE_COMPLETE_DELAY = 10000; // 10 seconds of no output = task completed
 const PROMPT_COMPLETE_DELAY = 3000; // 3 seconds after Claude prompt detected = completed
+const TASK_START_DELAY = 4000; // delay before sending next task prompt (let Claude settle)
 let autoApproveEnabled = false; // toggled from client
 let autoQueueEnabled = false; // BUG-05: server-side auto-queue state (synced across tabs)
 
@@ -65,6 +66,15 @@ const clientIdMap = new Map(); // clientId -> ws
 
 // --- Sleep prevention (caffeinate) ---
 let caffeinateProc = null;
+
+function stripAnsi(str) {
+  return str
+    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+    .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '')
+    .replace(/\x1b[()][0-9A-B]/g, '')
+    .replace(/\x1b\[[\?]?[0-9;]*[a-zA-Z]/g, '')
+    .replace(/\x1b[>=<]/g, '');
+}
 
 function updateCaffeinate() {
   const inProgress = db.getTasksByColumn('in_progress');
@@ -564,6 +574,10 @@ wss.on('connection', (ws) => {
           const contCheckpoint = getJsonlCheckpoint(contTask?.project_path || '');
           termTaskMap.set(termId, { taskId: msg.taskId, idleTimer: null, lastDataTime: Date.now(), jsonlCheckpoint: contCheckpoint });
           console.log(`[Task] continue termId=${termId} -> taskId=${msg.taskId}, checkpoint line=${contCheckpoint?.lineOffset ?? 'none'}`);
+          // Save prompt-ready state BEFORE reset (reset clears the flag)
+          const wasAtPrompt = p._claudeAtPrompt?.() || false;
+          // Clear any stuck pending-prompt state from previous task (prevents perpetual deadlock)
+          if (p._resetWaiting) p._resetWaiting();
           // Reset PTY state for polling (outputBuffer, lastDataTime, promptSeenSince)
           if (p._state) {
             p._state.outputBuffer = '';
@@ -586,18 +600,33 @@ wss.on('connection', (ws) => {
           // Replace newlines with spaces to prevent multi-line shell execution
           const safePrompt = (msg.prompt || '').replace(/[\r\n]+/g, ' ').trim();
 
-          // Send /compact every N tasks to save tokens
-          if (count % COMPACT_EVERY_N_TASKS === 0) {
-            console.log(`[Compact] ${termId}: sending /compact after ${count} tasks`);
-            p.write('/compact\r');
-            // Wait for compact to finish before sending the prompt
-            setTimeout(() => {
-              console.log(`[Compact] ${termId}: compact done, typing prompt`);
-              p.write(safePrompt + '\r');
-            }, 3000);
-          } else {
-            p.write(safePrompt + '\r');
-          }
+          const sendOrQueue = (text) => {
+            if (wasAtPrompt) {
+              // Claude was at ❯ — send after settle delay
+              if (count % COMPACT_EVERY_N_TASKS === 0) {
+                console.log(`[Compact] ${termId}: sending /compact after ${count} tasks`);
+                p.write('/compact\r');
+                setTimeout(() => {
+                  console.log(`[Compact] ${termId}: compact done, typing prompt`);
+                  p.write(text + '\r');
+                }, 3000);
+              } else {
+                console.log(`[PTY] Claude ready, sending prompt in ${TASK_START_DELAY}ms for ${termId}`);
+                setTimeout(() => {
+                  p.write(text);
+                  setTimeout(() => p.write('\r'), 200);
+                }, TASK_START_DELAY);
+              }
+            } else {
+              // Claude not ready yet — queue via pendingPrompt mechanism
+              // with a fallback: if onData never sees ❯ (e.g. idle-completed task), send directly
+              console.log(`[PTY] Claude not at ❯ for ${termId}, queuing prompt with fallback`);
+              p._setPendingPrompt(text);
+              setTimeout(() => p._sendPendingNow?.(), TASK_START_DELAY + 5000);
+            }
+          };
+
+          sendOrQueue(safePrompt);
         }
         break;
       }
@@ -709,22 +738,41 @@ function spawnShell(ws, termId, opts = {}) {
   // Auto-approve Claude Code prompts for task terminals
   // State object shared between closure and terminal:continue handler
   const ptyState = { outputBuffer: '', lastDataTime: Date.now() };
+  let claudeAtPrompt = false; // true when ❯ is visible and Claude is idle
   p._state = ptyState; // expose for terminal:continue to reset
   p._promptReset = () => {
     promptSeenSince = null;
     rateLimitDetected = false;
+    claudeAtPrompt = false;
     if (promptApproveTimer) { clearTimeout(promptApproveTimer); promptApproveTimer = null; }
   };
-
-  // Strip ANSI escape codes for pattern matching
-  function stripAnsi(str) {
-    return str
-      .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-      .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '')
-      .replace(/\x1b[()][0-9A-B]/g, '')
-      .replace(/\x1b\[[\?]?[0-9;]*[a-zA-Z]/g, '')
-      .replace(/\x1b[>=<]/g, '');
-  }
+  // Allow terminal:continue to queue a prompt if Claude is not yet at ❯
+  p._setPendingPrompt = (text) => {
+    pendingPrompt = text;
+    waitingForClaude = true;
+    claudeAtPrompt = false;
+  };
+  p._isWaitingForClaude = () => waitingForClaude;
+  p._claudeAtPrompt = () => claudeAtPrompt;
+  // Clear stuck pending-prompt state (used at start of each terminal:continue)
+  p._resetWaiting = () => {
+    waitingForClaude = false;
+    pendingPrompt = null;
+  };
+  // Force-send pending prompt (fallback if onData never fires with ❯)
+  p._sendPendingNow = () => {
+    if (pendingPrompt !== null) {
+      const toSend = pendingPrompt.replace(/[\r\n]+/g, ' ').trim();
+      pendingPrompt = null;
+      waitingForClaude = false;
+      console.log(`[PTY] Fallback: force-sending stuck prompt for ${termId}`);
+      p.write(toSend);
+      setTimeout(() => p.write('\r'), 200);
+      ptyState.outputBuffer = '';
+      ptyState.lastDataTime = Date.now();
+      termOutputBuffers.delete(termId);
+    }
+  };
 
   // Register task mapping and start polling for auto-approve + idle detection
   let pollInterval = null;
@@ -794,7 +842,7 @@ function spawnShell(ws, termId, opts = {}) {
         const continueAt = resetTime + 60000;
         rateLimitUntil = continueAt;
 
-        // Task stays in_progress — wait for rate limit reset, then send "продолжи"
+        // Task stays in_progress — wait for rate limit reset, then send "continue"
         console.log(`[RateLimit] ${termId}: detected! Task #${currentTaskId} stays in_progress. Reset at ${new Date(resetTime).toLocaleTimeString()}, continue at ${new Date(continueAt).toLocaleTimeString()}`);
 
         broadcast({
@@ -813,8 +861,8 @@ function spawnShell(ws, termId, opts = {}) {
           ptyState.outputBuffer = '';
 
           // Send continue prompt to Claude Code
-          try { p.write('продолжи\r'); } catch {}
-          console.log(`[RateLimit] ${termId}: resumed, sent "продолжи" for task #${currentTaskId}`);
+          try { p.write('continue\r'); } catch {}
+          console.log(`[RateLimit] ${termId}: resumed, sent "continue" for task #${currentTaskId}`);
 
           broadcast({
             type: 'ratelimit:resolved',
@@ -842,14 +890,13 @@ function spawnShell(ws, termId, opts = {}) {
         const lines = norm.split('\n').filter(l => l.trim());
         // Claude Code shows ❯ as input prompt, but status bar lines appear below it
         // Check last 5 lines for the prompt character
-        const recentLines = lines.slice(-5);
-        // Exclude menu cursors like "❯ 1. Yes" from being mistaken for Claude's input prompt
-        const isClaudeReady = recentLines.some(l => {
-          const t = l.trim();
-          return t.startsWith('❯') && !/^❯\s+\d+\./.test(t);
-        });
+        const recentLines = lines.slice(-15);
+        // Only match bare ❯ (idle input prompt), not ❯ followed by echoed task text
+        // e.g. "❯ Review /Users/..." is echoed input, NOT an idle prompt
+        const isClaudeReady = recentLines.some(l => /^❯\s*$/.test(l.trim()));
 
         if (isClaudeReady && !isPrompt) {
+          claudeAtPrompt = true;
           if (!promptSeenSince) {
             promptSeenSince = Date.now();
             console.log(`[IdleDetect] ${termId}: Claude prompt detected, starting ${PROMPT_COMPLETE_DELAY}ms countdown`);
@@ -906,7 +953,8 @@ function spawnShell(ws, termId, opts = {}) {
         setTimeout(() => {
           console.log(`[PTY] Claude ready, typing prompt for ${termId}`);
           const safeSend = toSend.replace(/[\r\n]+/g, ' ').trim();
-          p.write(safeSend + '\r');
+          p.write(safeSend);
+          setTimeout(() => p.write('\r'), 200);
           // Now release — Claude will start processing
           waitingForClaude = false;
           promptSeenSince = null;
@@ -1012,7 +1060,7 @@ function killShell(termId) {
 function getJsonlCheckpoint(projectPath) {
   try {
     const effectivePath = projectPath || process.env.HOME;
-    const dirName = effectivePath.replace(/\//g, '-').replace(/^-+/, '');
+    const dirName = effectivePath.replace(/\//g, '-');
     const claudeProjectDir = path.join(process.env.HOME, '.claude', 'projects', dirName);
     const files = fs.readdirSync(claudeProjectDir)
       .filter(f => f.endsWith('.jsonl'))
@@ -1033,7 +1081,7 @@ function extractLastResponseFromJSONL(projectPath, checkpoint) {
   try {
     // Fix 1: fall back to HOME when project_path is empty
     const effectivePath = projectPath || process.env.HOME;
-    const dirName = effectivePath.replace(/\//g, '-').replace(/^-+/, '');
+    const dirName = effectivePath.replace(/\//g, '-');
     const claudeProjectDir = path.join(process.env.HOME, '.claude', 'projects', dirName);
 
     // Find the most recently modified .jsonl file
@@ -1117,6 +1165,7 @@ function extractLastResponse(rawOutput) {
     if (/IDEextensioninstallfailed/i.test(trimmed)) return false;
     if (/^[─━]{3,}/.test(trimmed)) return false;
     if (/^❯\s*$/.test(trimmed)) return false;
+    if (/^\[Pasted\s*text\s*#\d+/i.test(trimmed)) return false;
     if (/^Searched\s+for\s+\d+\s+pattern/i.test(trimmed)) return false;
     return true;
   });

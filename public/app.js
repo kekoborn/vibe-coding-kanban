@@ -171,7 +171,8 @@ function handleWSMessage(msg) {
       else tasks.push(msg.task);
       renderBoard();
       if (msg.type === 'task:moved') {
-        checkAllTasksCompleted();
+        // Only check completion when a task leaves in_progress (not on manual ✓ Done click)
+        if (wasInProgress) checkAllTasksCompleted();
         // BUG-27: reset allCompletedFlag when task moved to backlog
         if (msg.task.column === 'backlog') resetAllCompletedFlag();
         // BUG-07: if task left in_progress, a slot freed up — try to run next
@@ -1563,7 +1564,7 @@ document.addEventListener('DOMContentLoaded', () => {
     .then(data => {
       const hint = document.getElementById('kl-skill-hint');
       if (hint) {
-        hint.textContent = data.installed ? 'скилл установлен' : 'скилл не найден — перезапусти сервер';
+        hint.textContent = data.installed ? 'skill installed' : 'skill not found — restart the server';
         hint.style.color = data.installed ? '' : 'var(--danger)';
       }
     })
@@ -1598,7 +1599,7 @@ function submitKanbanLead() {
   // Format the command for Claude Code
   let cmd;
   if (project) {
-    cmd = '/kanban-lead для проекта ' + project + ': ' + prompt;
+    cmd = '/kanban-lead for project ' + project + ': ' + prompt;
   } else {
     cmd = '/kanban-lead ' + prompt;
   }
@@ -1611,10 +1612,10 @@ function submitKanbanLead() {
   ws.send(JSON.stringify({ type: 'terminal:input', termId: 'helper', data: cmd + '\r' }));
 
   // Feedback
-  btn.textContent = 'Отправлено...';
+  btn.textContent = 'Sending...';
   btn.disabled = true;
   setTimeout(() => {
-    btn.textContent = 'Добавить задачи';
+    btn.textContent = 'Help me plan tasks';
     btn.disabled = false;
   }, 3000);
 
