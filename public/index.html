@@ -167,10 +167,6 @@
               <span>Drop file or click to attach</span>
             </div>
             <input type="file" id="attach-file-input" style="display:none" multiple>
-            <div class="attach-url-row">
-              <input type="text" id="attach-url-input" class="attach-url-input" placeholder="https://... (link)">
-              <button type="button" class="btn btn-sm" onclick="attachAddUrl()">Add</button>
-            </div>
           </div>
         </div>
 
@@ -190,13 +186,31 @@
     </div>
     <input type="hidden" id="return-task-id">
     <div class="return-task-name" id="return-task-title"></div>
+    <div class="return-prev-prompt-wrapper" style="display:none">
+      <label>Previous Prompt</label>
+      <pre class="return-prev-prompt" id="return-prev-prompt"></pre>
+    </div>
     <div class="return-prev-response-wrapper" style="display:none">
       <label>Previous Claude Response</label>
       <pre class="return-prev-response" id="return-prev-response"></pre>
     </div>
-    <label class="return-popup-label">Updated Prompt
-      <textarea id="return-prompt" rows="4" placeholder="Edit the prompt for re-run..."></textarea>
+    <label class="return-popup-label">New Prompt
+      <textarea id="return-prompt" rows="4" placeholder="Updated instructions for Claude..."></textarea>
     </label>
+    <div class="return-attachments-section">
+      <div class="return-attach-list" id="return-attach-list"></div>
+      <div class="return-attach-add">
+        <div class="return-drop-zone" id="return-drop-zone" onclick="document.getElementById('return-file-input').click()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+          <span>Attach file</span>
+        </div>
+        <input type="file" id="return-file-input" style="display:none" multiple>
+        <div class="return-url-row">
+          <input type="text" id="return-url-input" class="return-url-input" placeholder="https://... (link)">
+          <button type="button" class="btn btn-sm" onclick="returnAttachAddUrl()">Add</button>
+        </div>
+      </div>
+    </div>
     <div class="return-popup-actions">
       <button type="button" class="btn btn-sm" onclick="closeReturnModal()">Cancel</button>
       <button type="button" class="btn btn-sm btn-primary" onclick="submitReturn()">↩ Re-run</button>

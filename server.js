@@ -111,7 +111,16 @@ app.get('/api/auto-approve', (req, res) => {
   res.json({ enabled: autoApproveEnabled });
 });
 
-// Return a task from review — re-run with context from previous attempt
+// Temporary file upload for re-run context (not saved to task attachments)
+app.post('/api/tasks/:id/return-upload', upload.single('file'), (req, res) => {
+  const id = parseInt(req.params.id);
+  const task = db.getTaskById(id);
+  if (!task) return res.status(404).json({ error: 'not found' });
+  if (!req.file) return res.status(400).json({ error: 'no file' });
+  res.json({ path: req.file.path, name: req.file.originalname });
+});
+
+// Return a task from review — re-run with previous result + new instructions
 app.post('/api/tasks/:id/return', (req, res) => {
   const id = parseInt(req.params.id);
   const task = db.getTaskById(id);
@@ -120,32 +129,36 @@ app.post('/api/tasks/:id/return', (req, res) => {
   const newPrompt = (req.body.prompt || '').trim();
   if (!newPrompt) return res.status(400).json({ error: 'prompt is required' });
 
+  const extraFiles = req.body.extraFiles || []; // [{ path, name }]
+  const extraUrls = req.body.extraUrls || [];   // [string]
+
   const previousResponse = task.last_response || '';
 
   // Update description to new prompt
   db.updateTask({ id, description: newPrompt });
 
-  // Build context-aware prompt for Claude
+  // Build context: previous result + new instructions (old prompt is NOT included)
   let contextPrompt;
   if (previousResponse) {
-    contextPrompt = `This task was previously attempted. Here is the previous prompt and Claude's response:\n\n--- PREVIOUS PROMPT ---\n${task.description || task.title}\n\n--- CLAUDE'S PREVIOUS RESPONSE ---\n${previousResponse}\n\n--- NEW INSTRUCTIONS ---\nThe previous attempt was not satisfactory. Here are the revised instructions:\n${newPrompt}`;
+    contextPrompt = `[PREVIOUS RESULT]\n${previousResponse}\n\n[NEW INSTRUCTIONS]\n${newPrompt}`;
   } else {
     contextPrompt = newPrompt;
   }
 
-  // Append attachments
+  // Append file attachments from task + re-run extras
   let attachments = [];
   try { attachments = JSON.parse(task.attachments || '[]'); } catch {}
-  if (attachments.length > 0) {
-    const lines = ['\n\n[ATTACHED CONTEXT]'];
-    for (const a of attachments) {
-      if (a.type === 'file') lines.push(`- File: ${a.path} (${a.name})`);
-      else if (a.type === 'url') lines.push(`- URL: ${a.url}${a.label && a.label !== a.url ? ' — ' + a.label : ''}`);
-    }
-    contextPrompt += lines.join('\n');
-  }
+  const fileAttachments = attachments.filter(a => a.type === 'file');
 
-  const prompt = contextPrompt.replace(/'/g, "'\\''");
+  const contextLines = [];
+  if (fileAttachments.length > 0 || extraFiles.length > 0 || extraUrls.length > 0) {
+    contextLines.push('\n\n[ATTACHED CONTEXT]');
+    for (const a of fileAttachments) contextLines.push(`- File: ${a.path} (${a.name})`);
+    for (const f of extraFiles) contextLines.push(`- File: ${f.path} (${f.name})`);
+    for (const url of extraUrls) contextLines.push(`- URL: ${url}`);
+  }
+  contextPrompt += contextLines.join('\n');
+
   const projectPath = task.project_path || process.env.HOME;
 
   // Move to in_progress
@@ -333,10 +346,10 @@ function completeTaskFromServer(taskId, termId) {
   }
 
   // Save last response — prefer JSONL (clean) over PTY output (noisy)
+  const taskEntry = termTaskMap.get(termId);
+  const checkpoint = taskEntry?.jsonlCheckpoint || null;
   let lastResponse = '';
-  if (task.project_path) {
-    lastResponse = extractLastResponseFromJSONL(task.project_path);
-  }
+  lastResponse = extractLastResponseFromJSONL(task.project_path, checkpoint);
   if (!lastResponse) {
     const rawOutput = termOutputBuffers.get(termId) || '';
     lastResponse = extractLastResponse(rawOutput);
@@ -422,7 +435,10 @@ wss.on('connection', (ws) => {
           // Update task tracking
           const prev = termTaskMap.get(termId);
           if (prev?.idleTimer) clearTimeout(prev.idleTimer);
-          termTaskMap.set(termId, { taskId: msg.taskId, idleTimer: null, lastDataTime: Date.now() });
+          const contTask = db.getTaskById(msg.taskId);
+          const contCheckpoint = getJsonlCheckpoint(contTask?.project_path || '');
+          termTaskMap.set(termId, { taskId: msg.taskId, idleTimer: null, lastDataTime: Date.now(), jsonlCheckpoint: contCheckpoint });
+          console.log(`[Task] continue termId=${termId} -> taskId=${msg.taskId}, checkpoint line=${contCheckpoint?.lineOffset ?? 'none'}`);
           // Reset PTY state for polling (outputBuffer, lastDataTime, promptSeenSince)
           if (p._state) {
             p._state.outputBuffer = '';
@@ -567,7 +583,11 @@ function spawnShell(ws, termId, opts = {}) {
   // State object shared between closure and terminal:continue handler
   const ptyState = { outputBuffer: '', lastDataTime: Date.now() };
   p._state = ptyState; // expose for terminal:continue to reset
-  p._promptReset = () => { promptSeenSince = null; };
+  p._promptReset = () => {
+    promptSeenSince = null;
+    rateLimitDetected = false;
+    if (promptApproveTimer) { clearTimeout(promptApproveTimer); promptApproveTimer = null; }
+  };
 
   // Strip ANSI escape codes for pattern matching
   function stripAnsi(str) {
@@ -584,12 +604,16 @@ function spawnShell(ws, termId, opts = {}) {
   let rateLimitUntil = null; // timestamp when rate limit resets
   let rateLimitTimer = null;
   let promptSeenSince = null; // timestamp when Claude's input prompt was first detected
+  let rateLimitDetected = false; // sticky flag — set in onData, not lost when buffer rotates
+  let promptApproveTimer = null; // debounce for auto-approve in onData
 
   if (opts.autoApprove && opts.taskId) {
     const prev = termTaskMap.get(termId);
     if (prev?.idleTimer) clearTimeout(prev.idleTimer);
-    termTaskMap.set(termId, { taskId: opts.taskId, idleTimer: null, lastDataTime: Date.now() });
-    console.log(`[Task] Registered termId=${termId} -> taskId=${opts.taskId}`);
+    const initTask = db.getTaskById(opts.taskId);
+    const initCheckpoint = getJsonlCheckpoint(initTask?.project_path || opts.cwd || '');
+    termTaskMap.set(termId, { taskId: opts.taskId, idleTimer: null, lastDataTime: Date.now(), jsonlCheckpoint: initCheckpoint });
+    console.log(`[Task] Registered termId=${termId} -> taskId=${opts.taskId}, checkpoint line=${initCheckpoint?.lineOffset ?? 'none'}`);
 
     // Poll every 3 seconds — handles auto-approve, rate-limit, and idle completion
     // Uses termTaskMap for current taskId so it stays correct after terminal:continue
@@ -623,7 +647,7 @@ function spawnShell(ws, termId, opts = {}) {
 
       // --- Rate limit detection ---
       const nospaceNorm = nospace.replace(/[\u2018\u2019']/g, '');  // normalize curly/straight quotes
-      const isRateLimited = nospaceNorm.includes('youvehityourlimit') || nospace.includes('you\'vehityourlimit');
+      const isRateLimited = rateLimitDetected || nospaceNorm.includes('youvehityourlimit') || nospace.includes('you\'vehityourlimit');
 
       if (isRateLimited && !rateLimitUntil) {
         const timeMatch = norm.match(/resets?\s*(\d{1,2}(?::\d{2})?\s*(?:[ap]m))/i)
@@ -653,6 +677,7 @@ function spawnShell(ws, termId, opts = {}) {
         const delayMs = continueAt - Date.now();
         rateLimitTimer = setTimeout(() => {
           rateLimitUntil = null;
+          rateLimitDetected = false;
           ptyState.lastDataTime = Date.now();
           ptyState.outputBuffer = '';
 
@@ -763,6 +788,34 @@ function spawnShell(ws, termId, opts = {}) {
 
     if (!opts.autoApprove) return;
 
+    // Sticky rate limit detection — catch it in onData before buffer rotates
+    if (!rateLimitDetected) {
+      const stripped = stripAnsi(data).replace(/\s+/g, '').toLowerCase().replace(/[\u2018\u2019']/g, '');
+      if (stripped.includes('youvehityourlimit')) {
+        rateLimitDetected = true;
+        console.log(`[RateLimit] ${termId}: detected in onData (sticky flag set)`);
+      }
+    }
+
+    // Auto-approve in onData — catches prompts that disappear from buffer before poll fires
+    if (autoApproveEnabled && !rateLimitUntil && !waitingForClaude) {
+      const clean = stripAnsi(data);
+      const nospaceClean = clean.replace(/\s+/g, '').toLowerCase();
+      if (hasPrompt(clean, nospaceClean)) {
+        if (!promptApproveTimer) {
+          promptApproveTimer = setTimeout(() => {
+            promptApproveTimer = null;
+            if (autoApproveEnabled && !rateLimitUntil) {
+              console.log(`[AutoApprove] ${termId}: prompt caught in onData, sending Enter`);
+              try { p.write('\r'); } catch {}
+              ptyState.outputBuffer = '';
+              ptyState.lastDataTime = Date.now();
+            }
+          }, 400);
+        }
+      }
+    }
+
     // Store stripped output for last_response capture
     let buf = termOutputBuffers.get(termId) || '';
     buf += stripAnsi(data);
@@ -781,6 +834,7 @@ function spawnShell(ws, termId, opts = {}) {
     // Clear polling and rate limit timers
     if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
     if (rateLimitTimer) { clearTimeout(rateLimitTimer); rateLimitTimer = null; }
+    if (promptApproveTimer) { clearTimeout(promptApproveTimer); promptApproveTimer = null; }
     // If task was still mapped (not stopped), complete it
     const entry = termTaskMap.get(termId);
     if (entry?.taskId) {
@@ -816,10 +870,32 @@ function killShell(termId) {
 
 
 // Extract last Claude response from JSONL session files (clean, no TUI artifacts)
-function extractLastResponseFromJSONL(projectPath) {
+// Get the current JSONL file + line count for a project — used as checkpoint at task start
+function getJsonlCheckpoint(projectPath) {
   try {
-    // Convert project path to Claude's directory name: /Users/foo/bar → -Users-foo-bar
-    const dirName = (projectPath || '').replace(/\//g, '-').replace(/^-/, '-');
+    const effectivePath = projectPath || process.env.HOME;
+    const dirName = effectivePath.replace(/\//g, '-').replace(/^-+/, '');
+    const claudeProjectDir = path.join(process.env.HOME, '.claude', 'projects', dirName);
+    const files = fs.readdirSync(claudeProjectDir)
+      .filter(f => f.endsWith('.jsonl'))
+      .map(f => {
+        const fullPath = path.join(claudeProjectDir, f);
+        return { path: fullPath, mtime: fs.statSync(fullPath).mtimeMs };
+      })
+      .sort((a, b) => b.mtime - a.mtime);
+    if (files.length === 0) return null;
+    const lineCount = fs.readFileSync(files[0].path, 'utf8').split('\n').filter(l => l.trim()).length;
+    return { file: files[0].path, lineOffset: lineCount };
+  } catch {
+    return null;
+  }
+}
+
+function extractLastResponseFromJSONL(projectPath, checkpoint) {
+  try {
+    // Fix 1: fall back to HOME when project_path is empty
+    const effectivePath = projectPath || process.env.HOME;
+    const dirName = effectivePath.replace(/\//g, '-').replace(/^-+/, '');
     const claudeProjectDir = path.join(process.env.HOME, '.claude', 'projects', dirName);
 
     // Find the most recently modified .jsonl file
@@ -833,14 +909,27 @@ function extractLastResponseFromJSONL(projectPath) {
 
     if (files.length === 0) return '';
 
-    // Read the most recent session file from the end
-    const content = fs.readFileSync(files[0].path, 'utf8');
-    const lines = content.split('\n').filter(l => l.trim());
+    // Fix 2: if we have a checkpoint, prefer that file and only search lines written after task started
+    let targetFile = files[0];
+    let lineStart = 0;
+    if (checkpoint) {
+      const cpFile = files.find(f => f.path === checkpoint.file);
+      if (cpFile) {
+        targetFile = cpFile;
+        lineStart = checkpoint.lineOffset;
+      }
+    }
+
+    const content = fs.readFileSync(targetFile.path, 'utf8');
+    const allLines = content.split('\n').filter(l => l.trim());
+    // Only look at lines written after the checkpoint (task's own messages)
+    const lines = lineStart > 0 ? allLines.slice(lineStart) : allLines;
+    const searchLines = lines.length > 0 ? lines : allLines; // fallback to all if slice empty
 
     // Find the last assistant message with text content
-    for (let i = lines.length - 1; i >= 0; i--) {
+    for (let i = searchLines.length - 1; i >= 0; i--) {
       try {
-        const obj = JSON.parse(lines[i]);
+        const obj = JSON.parse(searchLines[i]);
         if (obj.type !== 'assistant') continue;
         const blocks = obj.message?.content || [];
         const texts = blocks

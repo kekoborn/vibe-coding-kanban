@@ -572,6 +572,10 @@ function initModal() {
 
   document.getElementById('task-priority').addEventListener('change', updatePrioritySelectStyle);
 
+  const pathInput = document.getElementById('task-project-path');
+  pathInput.addEventListener('blur', () => { pathInput.scrollLeft = pathInput.scrollWidth; });
+  pathInput.addEventListener('change', () => { pathInput.scrollLeft = pathInput.scrollWidth; });
+
   addBtn.addEventListener('click', () => openCreateModal());
 
   cancelBtn.addEventListener('click', () => closeModal());
@@ -648,7 +652,9 @@ function openEditModal(taskId) {
   document.getElementById('task-title').value = task.title;
   document.getElementById('task-description').value = task.description || '';
   document.getElementById('task-priority').value = task.priority || 'medium';
-  document.getElementById('task-project-path').value = task.project_path || '';
+  const pathEl = document.getElementById('task-project-path');
+  pathEl.value = task.project_path || '';
+  requestAnimationFrame(() => { pathEl.scrollLeft = pathEl.scrollWidth; });
 
   // Show last response if available
   const responseEl = document.getElementById('task-last-response');
@@ -840,13 +846,81 @@ async function _flushPendingAttachments(taskId) {
 
 // --- Return task (from review back to run) ---
 
+// --- Return popup attachments ---
+let _returnPending = []; // { type: 'file'|'url', file?, url?, id, name? }
+
+function _returnInitAttachments() {
+  _returnPending = [];
+  _returnRenderAttachments();
+
+  const fileInput = document.getElementById('return-file-input');
+  fileInput.onchange = (e) => {
+    for (const file of e.target.files) {
+      _returnPending.push({ type: 'file', file, id: crypto.randomUUID(), name: file.name });
+    }
+    fileInput.value = '';
+    _returnRenderAttachments();
+  };
+
+  const dropZone = document.getElementById('return-drop-zone');
+  dropZone.ondragover = (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); };
+  dropZone.ondragleave = () => dropZone.classList.remove('drag-over');
+  dropZone.ondrop = (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    for (const file of e.dataTransfer.files) {
+      _returnPending.push({ type: 'file', file, id: crypto.randomUUID(), name: file.name });
+    }
+    _returnRenderAttachments();
+  };
+}
+
+function returnAttachAddUrl() {
+  const input = document.getElementById('return-url-input');
+  const url = input.value.trim();
+  if (!url) return;
+  input.value = '';
+  _returnPending.push({ type: 'url', url, id: crypto.randomUUID() });
+  _returnRenderAttachments();
+}
+
+function _returnAttachDelete(id) {
+  _returnPending = _returnPending.filter(a => a.id !== id);
+  _returnRenderAttachments();
+}
+
+function _returnRenderAttachments() {
+  const list = document.getElementById('return-attach-list');
+  if (!list) return;
+  if (_returnPending.length === 0) { list.innerHTML = ''; return; }
+  list.innerHTML = _returnPending.map(a => {
+    const icon = a.type === 'url'
+      ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>'
+      : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>';
+    const label = a.type === 'url' ? a.url : a.name;
+    return `<div class="attachment-item">
+      ${icon}<span class="attach-name" title="${escapeAttr(label)}">${escapeHtml(label)}</span>
+      <button type="button" class="attach-delete" onclick="_returnAttachDelete('${a.id}')">&times;</button>
+    </div>`;
+  }).join('');
+}
+
 function openReturnModal(taskId, event) {
   const task = tasks.find(t => t.id === taskId);
   if (!task) return;
 
   document.getElementById('return-task-id').value = task.id;
   document.getElementById('return-task-title').textContent = task.title;
-  document.getElementById('return-prompt').value = task.description || '';
+  document.getElementById('return-prompt').value = '';
+
+  const prevPromptEl = document.getElementById('return-prev-prompt');
+  if (task.description) {
+    prevPromptEl.textContent = task.description;
+    prevPromptEl.parentElement.style.display = '';
+  } else {
+    prevPromptEl.textContent = '';
+    prevPromptEl.parentElement.style.display = 'none';
+  }
 
   const respEl = document.getElementById('return-prev-response');
   if (task.last_response) {
@@ -856,6 +930,8 @@ function openReturnModal(taskId, event) {
     respEl.textContent = '';
     respEl.parentElement.style.display = 'none';
   }
+
+  _returnInitAttachments();
 
   const popup = document.getElementById('return-popup');
   popup.classList.remove('hidden');
@@ -901,6 +977,7 @@ function _returnPopupOutsideClick(e) {
 function closeReturnModal() {
   document.getElementById('return-popup').classList.add('hidden');
   document.removeEventListener('mousedown', _returnPopupOutsideClick);
+  _returnPending = [];
 }
 
 async function submitReturn() {
@@ -908,13 +985,27 @@ async function submitReturn() {
   const newPrompt = document.getElementById('return-prompt').value.trim();
   if (!taskId || !newPrompt) return;
 
+  // Upload pending files
+  const extraFiles = [];
+  for (const a of _returnPending) {
+    if (a.type === 'file') {
+      const formData = new FormData();
+      formData.append('file', a.file);
+      const res = await fetch(`/api/tasks/${taskId}/return-upload`, { method: 'POST', body: formData });
+      if (res.ok) {
+        const data = await res.json();
+        extraFiles.push({ path: data.path, name: data.name });
+      }
+    }
+  }
+  const extraUrls = _returnPending.filter(a => a.type === 'url').map(a => a.url);
+
   closeReturnModal();
 
-  // Return the task with context-aware prompt (server includes previous Claude response)
   await fetch(`/api/tasks/${taskId}/return`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: newPrompt }),
+    body: JSON.stringify({ prompt: newPrompt, extraFiles, extraUrls }),
   });
 }
 
