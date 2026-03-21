@@ -52,6 +52,12 @@
     <div class="header-actions">
       <button id="theme-toggle" class="btn btn-theme-pill" onclick="toggleTheme()" title="Toggle light/dark theme"><span class="btn-theme-icon">&#9790;</span> Dark</button>
 <button id="logs-btn" class="btn btn-logs" onclick="toggleLogsPopup()" title="Show server & client logs">Logs</button>
+<div class="max-terminals-control" title="Максимум одновременных терминалов (∞ = без ограничений)">
+  <button class="max-terminals-btn" onclick="setMaxTerminals(maxTerminals <= 1 ? 0 : maxTerminals - 1)" title="Уменьшить">−</button>
+  <span class="max-terminals-label">Терм:</span>
+  <span id="max-terminals-display" class="max-terminals-display">∞</span>
+  <button class="max-terminals-btn" onclick="setMaxTerminals(maxTerminals === 0 ? 1 : maxTerminals + 1)" title="Увеличить">+</button>
+</div>
 <button id="auto-approve-btn" class="btn btn-auto-queue" onclick="toggleAutoApprove()" title="Auto-approve Claude Code permission prompts">Auto-approve: OFF</button>
       <button id="start-btn" class="btn btn-auto-queue" onclick="toggleStart()" title="Start all backlog tasks with auto-queue">&#9654; Start queue</button>
       <button id="add-task-btn" class="btn btn-primary">+ New Task</button>
@@ -107,9 +113,23 @@
 
       <!-- Helper Claude Code (always open) -->
       <div id="helper-section">
+        <div id="kanban-lead-panel">
+          <div class="kl-header">
+            <span class="kl-title">Kanban Lead</span>
+            <span class="kl-hint" id="kl-skill-hint"></span>
+            <button class="kl-toggle" id="kl-toggle" onclick="toggleKanbanLeadPanel()" title="Свернуть/развернуть">▲</button>
+          </div>
+          <div class="kl-body" id="kl-body">
+            <input type="text" id="kl-project" class="kl-input" placeholder="/path/to/project" list="project-path-list" autocomplete="off">
+            <textarea id="kl-prompt" class="kl-textarea" rows="3" placeholder="Что нужно сделать? Опиши задачи, которые нужно создать..."></textarea>
+            <div class="kl-actions">
+              <button class="btn btn-primary kl-submit" id="kl-submit" onclick="submitKanbanLead()">Добавить задачи</button>
+            </div>
+          </div>
+        </div>
         <div class="term-header">
           <span class="term-title">Claude Code — Helper</span>
-          <span class="term-hint">Helps you write task descriptions</span>
+          <span class="term-hint">Помогает формулировать задачи</span>
         </div>
         <div id="helper-container" class="term-container"></div>
       </div>

@@ -31,6 +31,24 @@ const multerStorage = multer.diskStorage({
 });
 const upload = multer({ storage: multerStorage, limits: { fileSize: 50 * 1024 * 1024 } });
 
+// --- Skill auto-install ---
+function installKanbanLeadSkill() {
+  const skillSrc = path.join(__dirname, 'skills', 'kanban-lead.md');
+  const commandsDir = path.join(process.env.HOME, '.claude', 'commands');
+  const skillDst = path.join(commandsDir, 'kanban-lead.md');
+  try {
+    if (!fs.existsSync(skillSrc)) { console.log('[Skill] source not found, skip'); return; }
+    if (!fs.existsSync(commandsDir)) fs.mkdirSync(commandsDir, { recursive: true });
+    if (!fs.existsSync(skillDst)) {
+      fs.copyFileSync(skillSrc, skillDst);
+      console.log('[Skill] kanban-lead installed to ' + skillDst);
+    } else {
+      console.log('[Skill] kanban-lead already installed');
+    }
+  } catch (err) { console.error('[Skill] install failed:', err.message); }
+}
+installKanbanLeadSkill();
+
 // --- PTY store ---
 const termOutputBuffers = new Map(); // termId -> stripped output text (last 10k chars)
 const termTaskMap = new Map(); // termId -> { taskId, idleTimer, lastDataTime }
@@ -146,6 +164,11 @@ app.post('/api/auto-queue', (req, res) => {
 
 app.get('/api/auto-queue', (req, res) => {
   res.json({ enabled: autoQueueEnabled });
+});
+
+app.get('/api/skill-status', (req, res) => {
+  const dst = path.join(process.env.HOME, '.claude', 'commands', 'kanban-lead.md');
+  res.json({ installed: fs.existsSync(dst) });
 });
 
 // Temporary file upload for re-run context (not saved to task attachments)
@@ -1042,19 +1065,31 @@ function extractLastResponseFromJSONL(projectPath, checkpoint) {
     const searchLines = lines.length > 0 ? lines : allLines; // fallback to all if slice empty
 
     // Find the last assistant message with text content
-    for (let i = searchLines.length - 1; i >= 0; i--) {
-      try {
-        const obj = JSON.parse(searchLines[i]);
-        if (obj.type !== 'assistant') continue;
-        const blocks = obj.message?.content || [];
-        const texts = blocks
-          .filter(b => b.type === 'text')
-          .map(b => b.text);
-        if (texts.length > 0) {
-          return texts.join('\n').slice(-2000);
-        }
-      } catch {}
+    const findLastAssistantText = (linesToSearch) => {
+      for (let i = linesToSearch.length - 1; i >= 0; i--) {
+        try {
+          const obj = JSON.parse(linesToSearch[i]);
+          if (obj.type !== 'assistant') continue;
+          const blocks = obj.message?.content || [];
+          const texts = blocks.filter(b => b.type === 'text').map(b => b.text);
+          if (texts.length > 0) return texts.join('\n').slice(-2000);
+        } catch {}
+      }
+      return '';
+    };
+
+    const result = findLastAssistantText(searchLines);
+    if (result) return result;
+
+    // Fallback: if checkpoint pointed to an older file and Claude Code created a new session,
+    // search the newest file (without checkpoint restriction)
+    if (targetFile.path !== files[0].path) {
+      const newestContent = fs.readFileSync(files[0].path, 'utf8');
+      const newestLines = newestContent.split('\n').filter(l => l.trim());
+      const newestResult = findLastAssistantText(newestLines);
+      if (newestResult) return newestResult;
     }
+
     return '';
   } catch (err) {
     console.error('[JSONL] Failed to extract response:', err.message);

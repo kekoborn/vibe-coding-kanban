@@ -4,6 +4,7 @@ let sessionStatuses = {}; // taskId -> { status, resetTime }
 let ws = null;
 let autoQueueEnabled = false;
 let autoApproveEnabled = false;
+let maxTerminals = parseInt(localStorage.getItem('maxTerminals') || '0'); // 0 = unlimited
 
 // BUG-02: unique ID for this browser tab — sent in run requests so server
 // can broadcast task:run only to the originating client
@@ -1404,6 +1405,18 @@ function isAnyRateLimitActive() {
   return false;
 }
 
+function setMaxTerminals(n) {
+  maxTerminals = Math.max(0, n);
+  localStorage.setItem('maxTerminals', maxTerminals);
+  updateMaxTerminalsUI();
+  addLog(`[MaxTerminals] Set to ${maxTerminals === 0 ? 'unlimited' : maxTerminals}`, 'idle');
+}
+
+function updateMaxTerminalsUI() {
+  const display = document.getElementById('max-terminals-display');
+  if (display) display.textContent = maxTerminals === 0 ? '∞' : maxTerminals;
+}
+
 let _autoQueueTimer = null;
 function tryAutoQueue() {
   if (_autoQueueTimer) return; // debounce: absorb rapid back-to-back calls
@@ -1441,6 +1454,8 @@ function _doAutoQueue() {
   for (const task of backlog) {
     const proj = task.project_path || '';
     if (busyProjects.has(proj) || started.has(proj)) continue;
+    // Respect maxTerminals limit (0 = unlimited)
+    if (maxTerminals > 0 && (busyProjects.size + started.size) >= maxTerminals) break;
     started.add(proj);
     addLog(`[AutoQueue] Starting task #${task.id} "${task.title}" for ${proj || 'HOME'}`, 'client');
     console.log(`[AutoQueue] Starting task #${task.id} for project ${proj}`);
@@ -1526,9 +1541,84 @@ document.addEventListener('DOMContentLoaded', () => {
   fetchTasks();
   fetchAutoApprove();
   fetchAutoQueue(); // BUG-05: sync auto-queue state on page load
+  updateMaxTerminalsUI();
   connectWS();
   initSortable();
   initModal();
   initResizer();
   restoreCollapsed();
+
+  // Restore Kanban Lead panel state
+  const klSaved = localStorage.getItem('klPanelOpen');
+  if (klSaved === 'false') {
+    const body = document.getElementById('kl-body');
+    const btn = document.getElementById('kl-toggle');
+    if (body) body.classList.add('hidden');
+    if (btn) btn.textContent = '▼';
+  }
+
+  // Check skill status
+  fetch('/api/skill-status')
+    .then(r => r.json())
+    .then(data => {
+      const hint = document.getElementById('kl-skill-hint');
+      if (hint) {
+        hint.textContent = data.installed ? 'скилл установлен' : 'скилл не найден — перезапусти сервер';
+        hint.style.color = data.installed ? '' : 'var(--danger)';
+      }
+    })
+    .catch(() => {});
 });
+
+function toggleKanbanLeadPanel() {
+  const body = document.getElementById('kl-body');
+  const btn = document.getElementById('kl-toggle');
+  const isOpen = !body.classList.contains('hidden');
+  if (isOpen) {
+    body.classList.add('hidden');
+    btn.textContent = '▼';
+    localStorage.setItem('klPanelOpen', 'false');
+  } else {
+    body.classList.remove('hidden');
+    btn.textContent = '▲';
+    localStorage.setItem('klPanelOpen', 'true');
+  }
+}
+
+function submitKanbanLead() {
+  const project = (document.getElementById('kl-project').value || '').trim();
+  const prompt = (document.getElementById('kl-prompt').value || '').trim();
+  const btn = document.getElementById('kl-submit');
+
+  if (!prompt) {
+    document.getElementById('kl-prompt').focus();
+    return;
+  }
+
+  // Format the command for Claude Code
+  let cmd;
+  if (project) {
+    cmd = '/kanban-lead для проекта ' + project + ': ' + prompt;
+  } else {
+    cmd = '/kanban-lead ' + prompt;
+  }
+
+  // Send to helper terminal via WebSocket (terminal:input)
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    addLog('[KanbanLead] WebSocket not connected', 'error');
+    return;
+  }
+  ws.send(JSON.stringify({ type: 'terminal:input', termId: 'helper', data: cmd + '\r' }));
+
+  // Feedback
+  btn.textContent = 'Отправлено...';
+  btn.disabled = true;
+  setTimeout(() => {
+    btn.textContent = 'Добавить задачи';
+    btn.disabled = false;
+  }, 3000);
+
+  // Clear prompt (keep project for next use)
+  document.getElementById('kl-prompt').value = '';
+  addLog('[KanbanLead] Sent command to helper terminal for project: ' + (project || 'unspecified'), 'client');
+}

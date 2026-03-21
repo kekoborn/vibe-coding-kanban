@@ -185,6 +185,51 @@ header h1 {
   text-align: center;
 }
 
+.max-terminals-control {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 4px;
+  height: 32px;
+  font-size: 13px;
+}
+
+.max-terminals-label {
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 0 2px;
+  user-select: none;
+}
+
+.max-terminals-display {
+  min-width: 18px;
+  text-align: center;
+  font-weight: 600;
+  color: var(--text);
+  font-size: 13px;
+  user-select: none;
+}
+
+.max-terminals-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.max-terminals-btn:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
 .btn-auto-queue.active {
   background: rgba(63, 185, 80, 0.15);
   border-color: var(--success);
@@ -1760,4 +1805,97 @@ body.h-resizing #h-resizer {
   font-size: 11px;
   color: var(--text-muted);
   margin-top: 4px;
+}
+
+/* Kanban Lead panel */
+#kanban-lead-panel {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.kl-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.kl-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.kl-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  flex: 1;
+}
+
+.kl-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: color 0.15s;
+}
+
+.kl-toggle:hover { color: var(--text); }
+
+.kl-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+}
+
+.kl-body.hidden { display: none; }
+
+.kl-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 6px 10px;
+  box-sizing: border-box;
+  outline: none;
+}
+
+.kl-input:focus { border-color: var(--primary); }
+
+.kl-textarea {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 6px 10px;
+  box-sizing: border-box;
+  outline: none;
+  resize: vertical;
+  font-family: inherit;
+  min-height: 60px;
+}
+
+.kl-textarea:focus { border-color: var(--primary); }
+
+.kl-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.kl-submit {
+  font-size: 12px;
+  padding: 5px 14px;
 }
