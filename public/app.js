@@ -5,6 +5,10 @@ let ws = null;
 let autoQueueEnabled = false;
 let autoApproveEnabled = false;
 
+// BUG-02: unique ID for this browser tab — sent in run requests so server
+// can broadcast task:run only to the originating client
+const CLIENT_ID = crypto.randomUUID();
+
 // --- Filters ---
 let filterSearch = '';
 let filterPriority = '';
@@ -51,6 +55,21 @@ async function fetchTasks() {
   const res = await fetch('/api/tasks');
   tasks = await res.json();
   renderBoard();
+  // BUG-20: restore sessionStatuses for in_progress tasks after page reload
+  const inProgressTasks = tasks.filter(t => t.column === 'in_progress');
+  for (const t of inProgressTasks) {
+    if (!sessionStatuses[t.id]) {
+      fetch(`/api/tasks/${t.id}/status`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.alive) {
+            sessionStatuses[t.id] = { status: 'running' };
+            renderBoard();
+          }
+        })
+        .catch(() => {});
+    }
+  }
 }
 
 async function createTask(data) {
@@ -82,7 +101,12 @@ async function moveTask(id, column, position) {
 }
 
 async function runTask(id) {
-  await fetch(`/api/tasks/${id}/run`, { method: 'POST' });
+  // BUG-02: pass clientId so server broadcasts task:run only to this tab
+  await fetch(`/api/tasks/${id}/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientId: CLIENT_ID }),
+  });
 }
 
 async function stopTask(id) {
@@ -102,6 +126,12 @@ function connectWS() {
 
   ws.onopen = () => {
     addLog('WebSocket connected', 'ws');
+    // BUG-02: register this tab's clientId with the server
+    ws.send(JSON.stringify({ type: 'client:register', clientId: CLIENT_ID }));
+    // BUG-12: re-sync auto-approve state on every reconnect (server may have restarted)
+    fetchAutoApprove();
+    // BUG-06: re-sync auto-queue state on every reconnect
+    fetchAutoQueue();
     // Re-attach terminal manager listeners on every (re)connect
     if (window.terminalManager) {
       window.terminalManager._attachWS();
@@ -132,15 +162,28 @@ function handleWSMessage(msg) {
       // fall through
     case 'task:updated':
     case 'task:moved': {
+      // BUG-07: detect if a slot freed up from in_progress (for tryAutoQueue)
+      const prevTask = tasks.find(t => t.id === msg.task.id);
+      const wasInProgress = prevTask?.column === 'in_progress';
       const idx = tasks.findIndex(t => t.id === msg.task.id);
       if (idx >= 0) tasks[idx] = msg.task;
       else tasks.push(msg.task);
       renderBoard();
-      if (msg.type === 'task:moved') checkAllTasksCompleted();
+      if (msg.type === 'task:moved') {
+        checkAllTasksCompleted();
+        // BUG-27: reset allCompletedFlag when task moved to backlog
+        if (msg.task.column === 'backlog') resetAllCompletedFlag();
+        // BUG-07: if task left in_progress, a slot freed up — try to run next
+        if (wasInProgress && msg.task.column !== 'in_progress') {
+          tryAutoQueue();
+        }
+      }
       break;
     }
 
     case 'task:deleted':
+      // BUG-04: clear sessionStatus for the deleted task
+      delete sessionStatuses[msg.id];
       tasks = tasks.filter(t => t.id !== msg.id);
       renderBoard();
       break;
@@ -217,6 +260,13 @@ function handleWSMessage(msg) {
       addLog(`[Settings] Auto-approve: ${msg.enabled ? 'ON' : 'OFF'}`, 'approve');
       autoApproveEnabled = msg.enabled;
       updateAutoApproveBtn();
+      break;
+
+    // BUG-05: sync auto-queue state across tabs via WS broadcast
+    case 'settings:autoQueue':
+      addLog(`[Settings] Auto-queue: ${msg.enabled ? 'ON' : 'OFF'}`, 'idle');
+      autoQueueEnabled = msg.enabled;
+      updateStartBtn();
       break;
 
     case 'terminal:spawned':
@@ -326,6 +376,7 @@ function restoreCollapsed() {
 const PRIORITY_LABELS = { high: 'High', medium: 'Medium', low: 'Low', hold: 'Hold' };
 
 function renderBoard() {
+  if (isDragging) return; // BUG-28: don't clobber SortableJS DOM during active drag
   updateProjectFilter();
   const columns = ['backlog', 'in_progress', 'review', 'done'];
   const filtered = filterTasks(tasks);
@@ -379,13 +430,18 @@ function renderTaskCard(task, column) {
     const priorityBadge = `<span class="priority-badge ${priority}">${PRIORITY_LABELS[priority]}</span>`;
     const deleteBtn = `<button class="btn-delete-trash" onclick="event.stopPropagation(); deleteTask(${task.id})" title="Delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>`;
 
+    // BUG-24: add Re-run button to done-card-compact
+    const rerunBtn = `<button class="btn btn-sm btn-run done-rerun-btn" onclick="event.stopPropagation(); runTask(${task.id})" title="Re-run this task">▶ Re-run</button>`;
     return `
       <div class="task-card done-card-compact" data-id="${task.id}" data-priority="${priority}"${statusAttr}>
         <div class="done-card-row">
           ${priorityBadge}
           <div class="done-card-content">
             <div class="done-card-title">${escapeHtml(task.title)}</div>
-            <span class="done-card-link" onclick="event.stopPropagation(); openEditModal(${task.id})">View details</span>
+            <div class="done-card-actions-row">
+              <span class="done-card-link" onclick="event.stopPropagation(); openEditModal(${task.id})">View details</span>
+              ${rerunBtn}
+            </div>
           </div>
           ${deleteBtn}
         </div>
@@ -455,9 +511,10 @@ function renderTaskCard(task, column) {
     }
   } catch {}
 
-  // Last response from Claude (shown in review)
-  const lastResponseHtml = column === 'review' && task.last_response
-    ? `<div class="task-card-response-wrapper"><div class="response-label">Claude Response</div><div class="task-card-response">${escapeHtml(task.last_response)}</div></div>`
+  // Last response from Claude (shown in review and backlog if available)
+  // RESP-BUG-01: convert newlines to <br> for readability in the card
+  const lastResponseHtml = (column === 'review' || column === 'backlog') && task.last_response
+    ? `<div class="task-card-response-wrapper collapsed" onclick="event.stopPropagation(); this.classList.toggle('collapsed')"><div class="response-label">Claude Response ▾</div><div class="task-card-response">${escapeHtml(task.last_response).replace(/\n/g, '<br>')}</div></div>`
     : '';
 
   return `
@@ -534,6 +591,8 @@ function viewTerminal(taskId) {
 
 // --- Drag and Drop ---
 
+let isDragging = false; // BUG-28: prevent renderBoard from clobbering SortableJS during drag
+
 function initSortable() {
   document.querySelectorAll('.task-list').forEach(list => {
     new Sortable(list, {
@@ -542,20 +601,41 @@ function initSortable() {
       ghostClass: 'sortable-ghost',
       chosenClass: 'sortable-chosen',
       dragClass: 'dragging',
+      onStart() {
+        isDragging = true;
+      },
       onEnd(evt) {
+        isDragging = false;
         const taskId = parseInt(evt.item.dataset.id);
         const oldColumn = evt.from.dataset.column;
         const newColumn = evt.to.dataset.column;
         const newPosition = evt.newIndex;
 
+        // BUG-01: skip if reordering within in_progress (don't re-run)
+        if (oldColumn === 'in_progress' && newColumn === 'in_progress') {
+          moveTask(taskId, newColumn, newPosition);
+          return;
+        }
+
         if (newColumn === 'in_progress') {
           runTask(taskId);
         } else {
-          // Stop running task when dragged out of in_progress
+          // BUG-03: if dragging out of in_progress, just moveTask — server will kill PTY
+          // Don't call stopTask (which moves to backlog) + moveTask (race condition)
           if (oldColumn === 'in_progress') {
-            stopTask(taskId);
+            // Use stop+move combo: pass target column to avoid double-move race
+            fetch(`/api/tasks/${taskId}/stop-move`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ column: newColumn, position: newPosition }),
+            });
+          } else {
+            moveTask(taskId, newColumn, newPosition);
           }
-          moveTask(taskId, newColumn, newPosition);
+          // BUG-27: reset allCompletedFlag when task moved to backlog
+          if (newColumn === 'backlog') {
+            resetAllCompletedFlag();
+          }
         }
       },
     });
@@ -595,7 +675,14 @@ function initModal() {
     if (!title) return;
 
     if (editId) {
-      await updateTaskApi(parseInt(editId), { title, description, priority, project_path });
+      // BUG-14: only allow priority change for running tasks
+      const editTask = tasks.find(t => t.id === parseInt(editId));
+      const editStatus = sessionStatuses[editTask?.id];
+      const editRunning = editStatus?.status === 'running' || editStatus?.status === 'waiting_reset';
+      const updatePayload = editRunning
+        ? { priority }
+        : { title, description, priority, project_path };
+      await updateTaskApi(parseInt(editId), updatePayload);
       await _flushPendingAttachments(parseInt(editId));
     } else {
       const res = await fetch('/api/tasks', {
@@ -646,6 +733,10 @@ function openEditModal(taskId) {
   const task = tasks.find(t => t.id === taskId);
   if (!task) return;
 
+  // BUG-14: lock editing of execution-sensitive fields while task is running
+  const status = sessionStatuses[task.id];
+  const isRunning = status?.status === 'running' || status?.status === 'waiting_reset';
+
   document.getElementById('modal-title').textContent = 'Edit Task';
   document.getElementById('modal-submit').textContent = 'Save';
   document.getElementById('task-edit-id').value = task.id;
@@ -655,6 +746,27 @@ function openEditModal(taskId) {
   const pathEl = document.getElementById('task-project-path');
   pathEl.value = task.project_path || '';
   requestAnimationFrame(() => { pathEl.scrollLeft = pathEl.scrollWidth; });
+
+  // BUG-14: disable fields that affect the running session
+  const lockedFields = ['task-title', 'task-description', 'task-project-path'];
+  for (const id of lockedFields) {
+    const el = document.getElementById(id);
+    if (el) el.readOnly = isRunning;
+  }
+  // Show/hide running warning banner
+  let banner = document.getElementById('modal-running-banner');
+  if (isRunning) {
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'modal-running-banner';
+      banner.style.cssText = 'background:rgba(248,81,73,0.12);border:1px solid rgba(248,81,73,0.4);border-radius:6px;padding:7px 10px;margin-bottom:10px;font-size:12px;color:var(--danger);';
+      banner.textContent = '⚠ Task is currently running — title, description and project path are read-only. You can still change priority.';
+      const form = document.getElementById('task-form');
+      form.insertBefore(banner, form.firstChild);
+    }
+  } else if (banner) {
+    banner.remove();
+  }
 
   // Show last response if available
   const responseEl = document.getElementById('task-last-response');
@@ -695,6 +807,13 @@ function closeModal() {
   document.getElementById('task-edit-id').value = '';
   _attachCurrentTaskId = null;
   _attachPending = [];
+  // BUG-14: restore fields after close
+  for (const id of ['task-title', 'task-description', 'task-project-path']) {
+    const el = document.getElementById(id);
+    if (el) el.readOnly = false;
+  }
+  const banner = document.getElementById('modal-running-banner');
+  if (banner) banner.remove();
 }
 
 // --- Attachments ---
@@ -978,12 +1097,32 @@ function closeReturnModal() {
   document.getElementById('return-popup').classList.add('hidden');
   document.removeEventListener('mousedown', _returnPopupOutsideClick);
   _returnPending = [];
+  _returnSubmitting = false; // BUG-22: reset on close
+  const submitBtn = document.querySelector('#return-popup .btn-primary');
+  if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '↩ Re-run'; }
 }
 
+let _returnSubmitting = false; // BUG-22: prevent double-submit
 async function submitReturn() {
+  if (_returnSubmitting) return; // BUG-22: guard against double-submit
   const taskId = parseInt(document.getElementById('return-task-id').value);
   const newPrompt = document.getElementById('return-prompt').value.trim();
-  if (!taskId || !newPrompt) return;
+  // BUG-21: show validation error if prompt is empty
+  if (!newPrompt) {
+    const promptEl = document.getElementById('return-prompt');
+    promptEl.style.borderColor = 'var(--danger)';
+    promptEl.placeholder = 'Prompt is required!';
+    promptEl.focus();
+    setTimeout(() => {
+      promptEl.style.borderColor = '';
+      promptEl.placeholder = 'Updated instructions for Claude...';
+    }, 2000);
+    return;
+  }
+  if (!taskId) return;
+  _returnSubmitting = true;
+  const submitBtn = document.querySelector('#return-popup .btn-primary');
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Sending...'; }
 
   // Upload pending files
   const extraFiles = [];
@@ -1001,12 +1140,18 @@ async function submitReturn() {
   const extraUrls = _returnPending.filter(a => a.type === 'url').map(a => a.url);
 
   closeReturnModal();
+  _returnSubmitting = false; // BUG-22: reset submitting flag after modal closed
 
-  await fetch(`/api/tasks/${taskId}/return`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: newPrompt, extraFiles, extraUrls }),
-  });
+  try {
+    // BUG-02: pass clientId so server sends task:run only to this tab
+    await fetch(`/api/tasks/${taskId}/return`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: newPrompt, extraFiles, extraUrls, clientId: CLIENT_ID }),
+    });
+  } finally {
+    _returnSubmitting = false;
+  }
 }
 
 // --- Auto-approve ---
@@ -1039,6 +1184,16 @@ async function fetchAutoApprove() {
   } catch {}
 }
 
+// BUG-05: fetch auto-queue state from server (syncs across tabs)
+async function fetchAutoQueue() {
+  try {
+    const res = await fetch('/api/auto-queue');
+    const data = await res.json();
+    autoQueueEnabled = data.enabled;
+    updateStartBtn();
+  } catch {}
+}
+
 // --- Logs ---
 
 var logEntries = [];
@@ -1062,7 +1217,7 @@ function addLog(text, category = '') {
     const badge = btn.querySelector('.log-badge') || (() => {
       const b = document.createElement('span');
       b.className = 'log-badge';
-      b.style.cssText = 'background:var(--accent);color:#fff;border-radius:8px;padding:0 5px;margin-left:4px;font-size:10px;';
+      b.style.cssText = 'background:var(--border);color:var(--text-muted);border-radius:8px;padding:0 5px;margin-left:4px;font-size:10px;';
       btn.appendChild(b);
       return b;
     })();
@@ -1122,10 +1277,16 @@ function checkAllTasksCompleted() {
     if (autoApproveEnabled) {
       toggleAutoApprove();
     }
-    // Disable auto-queue
+    // Disable auto-queue (BUG-05: use server-side toggle)
     if (autoQueueEnabled) {
-      autoQueueEnabled = false;
-      updateStartBtn();
+      fetch('/api/auto-queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: false }),
+      }).then(r => r.json()).then(data => {
+        autoQueueEnabled = data.enabled;
+        updateStartBtn();
+      });
     }
 
     showAllCompletedPopup(dateStr, timeStr);
@@ -1163,22 +1324,45 @@ function resetAllCompletedFlag() {
 
 // --- Auto-queue ---
 
-function toggleAutoQueue() {
-  autoQueueEnabled = !autoQueueEnabled;
+async function toggleAutoQueue() {
+  // BUG-05: sync auto-queue state server-side (like auto-approve)
+  const res = await fetch('/api/auto-queue', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled: !autoQueueEnabled }),
+  });
+  const data = await res.json();
+  autoQueueEnabled = data.enabled;
   updateStartBtn();
   if (autoQueueEnabled) {
     tryAutoQueue();
   }
 }
 
-function toggleStart() {
+async function toggleStart() {
   if (autoQueueEnabled) {
-    // Stop: disable auto-queue
-    autoQueueEnabled = false;
+    // Stop: disable auto-queue server-side
+    const res = await fetch('/api/auto-queue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: false }),
+    });
+    const data = await res.json();
+    autoQueueEnabled = data.enabled;
     updateStartBtn();
   } else {
-    // Start: enable auto-queue and run all backlog tasks
-    autoQueueEnabled = true;
+    // BUG-23: hint if auto-approve is off
+    if (!autoApproveEnabled) {
+      addLog('[Hint] Auto-approve is OFF — Claude prompts will pause execution. Enable Auto-approve for uninterrupted queue.', 'info');
+    }
+    // Start: enable auto-queue server-side and run all backlog tasks
+    const res = await fetch('/api/auto-queue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: true }),
+    });
+    const data = await res.json();
+    autoQueueEnabled = data.enabled;
     updateStartBtn();
     // Start first task per project immediately
     const backlog = tasks
@@ -1231,14 +1415,12 @@ function _doAutoQueue() {
     return;
   }
 
-  // Collect busy projects (have a running task)
+  // BUG-08: Collect busy projects — include ALL in_progress tasks regardless of
+  // sessionStatuses (which may be empty after page reload)
   const busyProjects = new Set();
   for (const t of tasks) {
     if (t.column === 'in_progress') {
-      const s = sessionStatuses[t.id];
-      if (s?.status === 'running' || s?.status === 'waiting_reset') {
-        busyProjects.add(t.project_path || '');
-      }
+      busyProjects.add(t.project_path || '');
     }
   }
 
@@ -1343,6 +1525,7 @@ function initResizer() {
 document.addEventListener('DOMContentLoaded', () => {
   fetchTasks();
   fetchAutoApprove();
+  fetchAutoQueue(); // BUG-05: sync auto-queue state on page load
   connectWS();
   initSortable();
   initModal();

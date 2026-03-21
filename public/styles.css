@@ -729,8 +729,26 @@ main {
   margin-bottom: 4px;
 }
 
+/* RESP-BUG-01 + RESP-BUG-02: collapsible response wrapper */
 .task-card-response-wrapper {
   margin-bottom: 6px;
+  cursor: pointer;
+}
+
+.task-card-response-wrapper .response-label {
+  user-select: none;
+}
+
+.task-card-response-wrapper.collapsed .task-card-response {
+  display: none;
+}
+
+.task-card-response-wrapper.collapsed .response-label::after {
+  content: '';
+}
+
+.task-card-response-wrapper:not(.collapsed) .response-label {
+  color: var(--accent);
 }
 
 .response-label {
@@ -749,9 +767,9 @@ main {
   border: 1px solid rgba(88, 166, 255, 0.15);
   border-radius: 4px;
   padding: 4px 6px;
-  max-height: 80px;
+  max-height: 120px;
   overflow-y: auto;
-  white-space: pre-wrap;
+  white-space: normal; /* RESP-BUG-01: \n converted to <br>, pre-wrap would double-space */
   word-break: break-word;
   font-family: Menlo, Monaco, 'Courier New', monospace;
   line-height: 1.4;
@@ -792,17 +810,35 @@ main {
   text-overflow: ellipsis;
 }
 
+/* BUG-24: done card actions row for re-run + view details */
+.done-card-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
 .done-card-link {
   display: inline-block;
   font-size: 10px;
   color: var(--text-muted);
   cursor: pointer;
   transition: color 0.15s;
-  margin-top: 2px;
 }
 
 .done-card-link:hover {
   color: var(--primary);
+}
+
+.done-rerun-btn {
+  font-size: 10px;
+  padding: 1px 6px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.done-card-compact:hover .done-rerun-btn {
+  opacity: 1;
 }
 
 .done-card-row .btn-delete-trash {

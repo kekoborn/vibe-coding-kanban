@@ -33,21 +33,33 @@ public/
 
 ## Ключевые паттерны
 
-**Rate-limit (server.js ~628-668):**
-- Обнаруживается по строке `youvehityourlimit` в PTY output
-- При обнаружении: задача ОСТАЁТСЯ в in_progress, НЕ переходит в review
+**Rate-limit (server.js):**
+- `rateLimitDetected` — sticky-флаг, ставится в `onData` (не в poll), не теряется при ротации буфера
+- При обнаружении: задача ОСТАЁТСЯ в in_progress, ждёт сброса лимита
 - `rateLimitUntil` — timestamp, блокирует idle/prompt detection пока лимит активен
 - После сброса: `p.write('продолжи\r')` → broadcast `ratelimit:resolved`
+- Флаг сбрасывается в `p._promptReset()` и по истечении таймера
 
-**Idle detection:**
-- `IDLE_COMPLETE_DELAY = 10000ms` — таймер без вывода
-- `PROMPT_COMPLETE_DELAY = 3000ms` — таймер после обнаружения промпта Claude
+**Auto-approve:**
+- Основной путь: `onData` + debounce 400ms — ловит промпты до ротации буфера
+- Резервный путь: poll каждые 3 секунды (fallback)
+- Промпты: `Do you want to`, `Run command`, `(y/n)`, `Enter to confirm`, `esc to cancel`
+
+**Idle/Prompt completion detection:**
+- `IDLE_COMPLETE_DELAY = 10000ms` — пауза без вывода → задача в review
+- `PROMPT_COMPLETE_DELAY = 3000ms` — стабильный `❯` → задача в review
 - Оба блокируются пока `rateLimitUntil` активен
+
+**JSONL checkpoint (Claude Response):**
+- При старте задачи: `getJsonlCheckpoint(project_path)` сохраняет текущий номер строки в JSONL
+- При завершении: `extractLastResponseFromJSONL` читает только строки ПОСЛЕ checkpoint
+- Исключает захват ответов от других задач в той же PTY-сессии
+- При пустом `project_path` — ищет JSONL в HOME (`~/.claude/projects/-Users-{user}/`)
 
 **Терминалы:**
 - Один PTY на `project_path` — несколько проектов параллельно
 - PTY сессии переживают перезагрузку страницы (persistent)
-- `termTaskMap` — маппинг termId → текущий taskId
+- `termTaskMap` — маппинг termId → `{ taskId, jsonlCheckpoint, ... }`
 
 **БД:**
 - Путь захардкожен: `path.join(__dirname, 'kanban.db')`
@@ -62,7 +74,12 @@ public/
 | `PROMPT_COMPLETE_DELAY` | 3000 ms | Ожидание после промпта Claude |
 | `COMPACT_EVERY_N_TASKS` | 10 | `/compact` каждые N задач |
 
+## Известные ограничения
+
+- `PROMPT_COMPLETE_DELAY = 3000ms` — может срабатывать раньше времени если `❯` появляется во время stop hook
+- `/compact` каждые N задач: во время compact `❯` детектируется → race condition с idle detection
+
 ## Деплой
 
-Публичный репо: https://github.com/kekoborn/claude-kanban
+Публичный репо: https://github.com/kekoborn/vibe-coding-kanban
 Лицензия: MIT, author: kekoborn

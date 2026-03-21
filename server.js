@@ -40,6 +40,10 @@ const COMPACT_EVERY_N_TASKS = 10; // send /compact after every N tasks
 const IDLE_COMPLETE_DELAY = 10000; // 10 seconds of no output = task completed
 const PROMPT_COMPLETE_DELAY = 3000; // 3 seconds after Claude prompt detected = completed
 let autoApproveEnabled = false; // toggled from client
+let autoQueueEnabled = false; // BUG-05: server-side auto-queue state (synced across tabs)
+
+// BUG-02: track clientId -> ws mapping for targeted broadcasts
+const clientIdMap = new Map(); // clientId -> ws
 
 // --- Sleep prevention (caffeinate) ---
 let caffeinateProc = null;
@@ -93,6 +97,27 @@ app.put('/api/tasks/:id/move', (req, res) => {
 
 app.delete('/api/tasks/:id', (req, res) => {
   const id = parseInt(req.params.id);
+  const task = db.getTaskById(id);
+
+  // BUG-04: kill PTY and clear termTaskMap before deleting
+  for (const [tid, entry] of termTaskMap) {
+    if (entry.taskId === id) {
+      termTaskMap.delete(tid);
+      // Kill the PTY
+      const gEntry = globalPtys.get(tid);
+      if (gEntry) {
+        try { gEntry.pty.kill(); } catch {}
+        globalPtys.delete(tid);
+      }
+      break;
+    }
+  }
+
+  // Notify clients to stop the task terminal and clear session status
+  if (task) {
+    broadcast({ type: 'task:stop', taskId: id, projectPath: task.project_path || '' });
+  }
+
   db.deleteTask(id);
   broadcast({ type: 'task:deleted', id });
   updateCaffeinate();
@@ -109,6 +134,18 @@ app.post('/api/auto-approve', (req, res) => {
 
 app.get('/api/auto-approve', (req, res) => {
   res.json({ enabled: autoApproveEnabled });
+});
+
+// BUG-05: Auto-queue server-side state
+app.post('/api/auto-queue', (req, res) => {
+  autoQueueEnabled = !!req.body.enabled;
+  console.log(`[AutoQueue] ${autoQueueEnabled ? 'ENABLED' : 'DISABLED'}`);
+  broadcast({ type: 'settings:autoQueue', enabled: autoQueueEnabled });
+  res.json({ ok: true, enabled: autoQueueEnabled });
+});
+
+app.get('/api/auto-queue', (req, res) => {
+  res.json({ enabled: autoQueueEnabled });
 });
 
 // Temporary file upload for re-run context (not saved to task attachments)
@@ -161,11 +198,21 @@ app.post('/api/tasks/:id/return', (req, res) => {
 
   const projectPath = task.project_path || process.env.HOME;
 
+  // BUG-18: clear last_response before running so stale response isn't shown
+  db.setLastResponse(id, '');
+
   // Move to in_progress
   const updated = db.moveTask({ id, column: 'in_progress' });
   broadcast({ type: 'task:moved', task: updated });
 
-  broadcast({ type: 'task:run', taskId: id, prompt: contextPrompt, autoApprove: true, cwd: projectPath });
+  // BUG-02: send task:run only to the originating client
+  const clientId = req.body?.clientId;
+  const runMsg = { type: 'task:run', taskId: id, prompt: contextPrompt, autoApprove: true, cwd: projectPath };
+  if (clientId && clientIdMap.has(clientId)) {
+    sendToClient(clientId, runMsg);
+  } else {
+    broadcast(runMsg);
+  }
 
   updateCaffeinate();
   res.json({ ok: true });
@@ -197,14 +244,24 @@ app.post('/api/tasks/:id/run', (req, res) => {
   if (!task) return res.status(404).json({ error: 'not found' });
 
   const rawPrompt = buildPromptWithAttachments(task);
-  const prompt = rawPrompt.replace(/'/g, "'\\''");
   const projectPath = task.project_path || process.env.HOME;
+
+  // BUG-18: clear last_response before running to avoid stale response on card
+  db.setLastResponse(id, '');
 
   // Move to in_progress
   const updated = db.moveTask({ id, column: 'in_progress' });
   broadcast({ type: 'task:moved', task: updated });
 
-  broadcast({ type: 'task:run', taskId: id, prompt: rawPrompt, autoApprove: true, cwd: projectPath });
+  // BUG-02: send task:run only to the originating client (not all tabs)
+  const clientId = req.body?.clientId;
+  const runMsg = { type: 'task:run', taskId: id, prompt: rawPrompt, autoApprove: true, cwd: projectPath };
+  if (clientId && clientIdMap.has(clientId)) {
+    sendToClient(clientId, runMsg);
+  } else {
+    // Fallback: broadcast to all (e.g. direct API calls without clientId)
+    broadcast(runMsg);
+  }
 
   updateCaffeinate();
   res.json({ ok: true });
@@ -253,12 +310,39 @@ app.post('/api/tasks/:id/stop', (req, res) => {
   // Kill the PTY in all connected WS clients
   broadcast({ type: 'task:stop', taskId: id, projectPath: task?.project_path || '' });
 
-  // Move back to backlog
+  // Move back to backlog only if in_progress (don't move if already elsewhere)
   if (task && task.column === 'in_progress') {
     const updated = db.moveTask({ id, column: 'backlog' });
     broadcast({ type: 'task:moved', task: updated });
   }
 
+  broadcast({ type: 'session:stopped', taskId: id });
+  updateCaffeinate();
+  res.json({ ok: true });
+});
+
+// BUG-03: atomic stop+move — avoids race condition where stopTask moves to backlog
+// and then moveTask moves to target column (triggering autoQueue in between)
+app.post('/api/tasks/:id/stop-move', (req, res) => {
+  const id = parseInt(req.params.id);
+  const { column, position } = req.body;
+  const task = db.getTaskById(id);
+  if (!task) return res.status(404).json({ error: 'not found' });
+
+  // Clear task mapping so onExit doesn't auto-complete
+  for (const [tid, entry] of termTaskMap) {
+    if (entry.taskId === id) {
+      termTaskMap.delete(tid);
+      break;
+    }
+  }
+
+  // Kill the PTY in all connected WS clients
+  broadcast({ type: 'task:stop', taskId: id, projectPath: task.project_path || '' });
+
+  // Move directly to target column (no intermediate backlog move)
+  const updated = db.moveTask({ id, column: column || 'backlog', position });
+  broadcast({ type: 'task:moved', task: updated });
   broadcast({ type: 'session:stopped', taskId: id });
   updateCaffeinate();
   res.json({ ok: true });
@@ -392,8 +476,17 @@ function broadcast(data) {
   }
 }
 
+// BUG-02: send a message only to a specific client identified by clientId
+function sendToClient(clientId, data) {
+  const ws = clientIdMap.get(clientId);
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(data));
+  }
+}
+
 wss.on('connection', (ws) => {
   clients.add(ws);
+  // BUG-02: client will register its clientId via 'client:register' message
 
   ws.on('message', (raw) => {
     let msg;
@@ -402,6 +495,15 @@ wss.on('connection', (ws) => {
     const termId = msg.termId || 'default';
 
     switch (msg.type) {
+      // BUG-02: register clientId -> ws mapping for targeted task:run delivery
+      case 'client:register': {
+        if (msg.clientId) {
+          ws._clientId = msg.clientId;
+          clientIdMap.set(msg.clientId, ws);
+        }
+        break;
+      }
+
       case 'terminal:spawn':
         console.log(`[WS] spawn: ${termId}, cmd: ${msg.command || 'shell'}, cwd: ${msg.cwd || 'HOME'}, taskId: ${msg.taskId || 'none'}`);
         spawnShell(ws, termId, msg);
@@ -522,6 +624,8 @@ wss.on('connection', (ws) => {
       entry.subscribers.delete(ws);
     }
     clients.delete(ws);
+    // BUG-02: remove clientId mapping
+    if (ws._clientId) clientIdMap.delete(ws._clientId);
   });
 });
 
@@ -623,6 +727,10 @@ function spawnShell(ws, termId, opts = {}) {
     }
 
     function hasPrompt(text, nospaceText) {
+      // BUG-10: "1.yes + no" pattern requires "Esc to cancel" to distinguish
+      // Claude Code system prompts from Claude's own questions (which may contain
+      // "1. Yes" / "2. No" as answer options)
+      const isSystemPromptPattern = nospaceText.includes('1.yes') && nospaceText.includes('no') && nospaceText.includes('esctocancel');
       return (
         text.includes('Do you want to') || nospaceText.includes('doyouwantto') ||
         text.includes('Run command') || nospaceText.includes('runcommand') ||
@@ -630,7 +738,7 @@ function spawnShell(ws, termId, opts = {}) {
         /\(y\/n\)/i.test(text) ||
         text.includes('Enter to confirm') || nospaceText.includes('entertoconfirm') ||
         nospaceText.includes('esctocancel') ||
-        (nospaceText.includes('1.yes') && nospaceText.includes('no'))
+        isSystemPromptPattern
       );
     }
 
@@ -712,7 +820,11 @@ function spawnShell(ws, termId, opts = {}) {
         // Claude Code shows ❯ as input prompt, but status bar lines appear below it
         // Check last 5 lines for the prompt character
         const recentLines = lines.slice(-5);
-        const isClaudeReady = recentLines.some(l => l.trim().startsWith('❯'));
+        // Exclude menu cursors like "❯ 1. Yes" from being mistaken for Claude's input prompt
+        const isClaudeReady = recentLines.some(l => {
+          const t = l.trim();
+          return t.startsWith('❯') && !/^❯\s+\d+\./.test(t);
+        });
 
         if (isClaudeReady && !isPrompt) {
           if (!promptSeenSince) {
@@ -801,7 +913,10 @@ function spawnShell(ws, termId, opts = {}) {
     if (autoApproveEnabled && !rateLimitUntil && !waitingForClaude) {
       const clean = stripAnsi(data);
       const nospaceClean = clean.replace(/\s+/g, '').toLowerCase();
-      if (hasPrompt(clean, nospaceClean)) {
+      // Also check accumulated buffer — permission prompts span multiple onData chunks
+      const bufSample = stripAnsi(ptyState.outputBuffer.slice(-600)).replace(/\r/g, '');
+      const bufNospace = bufSample.replace(/\s+/g, '').toLowerCase();
+      if (hasPrompt(clean, nospaceClean) || hasPrompt(bufSample, bufNospace)) {
         if (!promptApproveTimer) {
           promptApproveTimer = setTimeout(() => {
             promptApproveTimer = null;

@@ -424,13 +424,21 @@ class TerminalManager {
   stopTaskInProject(taskId, projectPath) {
     // Find the project terminal running this task
     const proj = this.projects.get(projectPath);
-    if (proj && proj.currentTaskId === taskId) {
+    if (!proj) return;
+
+    // BUG-19: always filter proj.queue to remove stopped task (whether running or queued)
+    const wasQueued = proj.queue.some(q => q.taskId === taskId);
+    proj.queue = proj.queue.filter(q => q.taskId !== taskId);
+    if (wasQueued) {
+      this._updateTabBadge(proj);
+    }
+
+    if (proj.currentTaskId === taskId) {
       // Kill the PTY
       this._ws('terminal:kill', { termId: proj.termId });
       proj.running = false;
       proj.sessionAlive = false;
       proj.currentTaskId = null;
-      proj.queue = [];
       proj.tabEl.classList.remove('running');
       this._updateTabBadge(proj);
       proj.term.write('\r\n\x1b[90m── Stopped ──\x1b[0m\r\n');

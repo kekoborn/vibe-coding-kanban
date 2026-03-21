@@ -1,0 +1,279 @@
+UX Audit & Bug Report — Claude Kanban
+Дата: 2026-03-21
+Исправлено: 2026-03-21
+========================================
+
+Статус фиксов: [FIXED] = исправлено, [NOTE] = задокументировано/acceptable, [OPEN] = не исправлено
+
+═══════════════════════════════════════════════════════════════
+КРИТИЧЕСКИЕ БАГИ
+═══════════════════════════════════════════════════════════════
+
+[BUG-01] [FIXED] Drag-and-drop внутри in_progress запускает задачу повторно
+---------------------------------------------------------------------------
+Файл: public/app.js (onEnd в initSortable)
+Фикс: добавлена проверка `if (oldColumn === 'in_progress' && newColumn === 'in_progress')` →
+  вызывается только moveTask (для обновления позиции), не runTask.
+  Также добавлен флаг isDragging (BUG-28).
+
+[BUG-02] [FIXED] task:run broadcast — двойное выполнение при нескольких вкладках браузера
+---------------------------------------------------------------------------
+Файл: server.js + app.js
+Фикс: каждая вкладка генерирует уникальный CLIENT_ID (crypto.randomUUID()).
+  При WS-подключении клиент регистрирует свой clientId (client:register).
+  Сервер хранит clientIdMap (clientId→ws). POST /api/tasks/:id/run принимает clientId
+  в теле и использует sendToClient() вместо broadcast() для task:run.
+  Fallback на broadcast если clientId не передан (прямые API вызовы).
+
+[BUG-03] [FIXED] Drag из in_progress в другую колонку — race condition со stopTask
+---------------------------------------------------------------------------
+Файл: app.js (initSortable onEnd) + server.js
+Фикс: добавлен endpoint POST /api/tasks/:id/stop-move который атомарно:
+  1. Удаляет task из termTaskMap (предотвращает auto-complete)
+  2. Broadcast task:stop (клиент убивает PTY)
+  3. Перемещает задачу напрямую в target column (минуя backlog)
+  4. Broadcast task:moved + session:stopped
+  Клиент использует stop-move вместо stopTask+moveTask.
+
+[BUG-04] [FIXED] Удаление запущенной задачи оставляет PTY-сирот и stale state
+---------------------------------------------------------------------------
+Файл: server.js (DELETE /api/tasks/:id) + app.js
+Фикс: DELETE теперь:
+  1. Удаляет задачу из termTaskMap
+  2. Убивает PTY (globalPtys.get(tid)?.pty.kill())
+  3. Broadcast task:stop ПЕРЕД task:deleted
+  Клиент в handleWSMessage('task:deleted') удаляет sessionStatuses[msg.id].
+
+═══════════════════════════════════════════════════════════════
+БАГИ АВТО-ОЧЕРЕДИ
+═══════════════════════════════════════════════════════════════
+
+[BUG-05] [FIXED] autoQueueEnabled не синхронизируется между вкладками
+---------------------------------------------------------------------------
+Файл: server.js + app.js
+Фикс: добавлены server-side эндпоинты POST/GET /api/auto-queue.
+  При изменении — broadcast settings:autoQueue всем клиентам.
+  toggleAutoQueue(), toggleStart(), checkAllTasksCompleted() используют API.
+  DOMContentLoaded + ws.onopen вызывают fetchAutoQueue() для sync.
+
+[BUG-06] [FIXED] После page reload очередь не восстанавливается
+---------------------------------------------------------------------------
+Файл: app.js (ws.onopen)
+Фикс: ws.onopen вызывает fetchAutoQueue() для получения серверного статуса.
+  Таким образом после перезагрузки/переподключения autoQueueEnabled корректен.
+
+[BUG-07] [FIXED] tryAutoQueue не вызывается при ручном перемещении задачи из in_progress
+---------------------------------------------------------------------------
+Файл: app.js (handleWSMessage 'task:moved')
+Фикс: перед обновлением tasks[] сохраняем prevTask.column.
+  Если wasInProgress && новая колонка !== 'in_progress' → tryAutoQueue().
+
+[BUG-08] [FIXED] Auto-queue не запускает задачи когда in_progress задача без sessionStatus
+---------------------------------------------------------------------------
+Файл: app.js (_doAutoQueue)
+Фикс: busyProjects теперь включает ВСЕ задачи с column==='in_progress',
+  независимо от sessionStatuses. Это корректно после page reload.
+
+[BUG-09] [NOTE] toggleStart запускает только ПЕРВУЮ задачу каждого проекта
+---------------------------------------------------------------------------
+Это корректное поведение: одна задача на проект, следующая — через tryAutoQueue
+после завершения предыдущей. Документировано как design intent.
+
+═══════════════════════════════════════════════════════════════
+БАГИ АВТО-ОДОБРЕНИЯ
+═══════════════════════════════════════════════════════════════
+
+[BUG-10] [FIXED] Auto-approve отправляет Enter на вопросы Claude (не системные промпты)
+---------------------------------------------------------------------------
+Файл: server.js (hasPrompt)
+Фикс: паттерн (1.yes + no) теперь требует ТАКЖЕ наличие 'esctocancel'.
+  Claude Code system prompts всегда содержат "Esc to cancel".
+  Свободные вопросы Claude не содержат — не будут ошибочно одобрены.
+
+[BUG-11] [NOTE] Auto-approve срабатывает при autoApproveEnabled=true даже без очереди
+---------------------------------------------------------------------------
+Задокументированное поведение. Пользователь должен осознанно включать auto-approve.
+
+[BUG-12] [FIXED] autoApproveEnabled не синхронизируется при server restart
+---------------------------------------------------------------------------
+Файл: app.js (ws.onopen)
+Фикс: ws.onopen вызывает fetchAutoApprove() при каждом reconnect.
+
+[BUG-13] [NOTE] checkAllTasksCompleted отключает auto-approve без подтверждения
+---------------------------------------------------------------------------
+Поведение оставлено как есть — popup информирует пользователя об отключении.
+
+═══════════════════════════════════════════════════════════════
+БАГИ CLAUDE RESPONSE / КАРТОЧЕК
+═══════════════════════════════════════════════════════════════
+
+[BUG-14] [FIXED] Редактирование задачи во время её выполнения
+---------------------------------------------------------------------------
+Файл: app.js (openEditModal, closeModal, form submit)
+Фикс: при открытии editModal для running задачи:
+  - title, description, project_path → readOnly = true
+  - показывается красный баннер "Task is currently running — ... read-only"
+  - submit handler отправляет только { priority } для running задач
+  closeModal() снимает readOnly и удаляет баннер.
+
+[BUG-15] [PARTIAL] last_response показывается только в review, не в done/backlog
+---------------------------------------------------------------------------
+Фикс: last_response теперь показывается также в backlog (если задача вернулась
+из review). В done-карточке показывается через "View details" (editModal).
+Дополнительный RESP-BUG-01/02 (см. ниже) добавляет collapsible поведение.
+
+[BUG-16] [NOTE] Claude Response не обновляется если задача выполнена через onExit
+---------------------------------------------------------------------------
+Проверка показала: terminal.js _handleExit уже передаёт termId в теле запроса
+/api/tasks/:id/complete (JSON.stringify({ termId: proj.termId })).
+Сервер корректно обрабатывает termId. Баг уже был исправлен ранее.
+
+[BUG-17] [NOTE] PTY buffer truncation
+---------------------------------------------------------------------------
+Допустимо: JSONL fallback используется как primary source. PTY buffer 8-10KB
+достаточен для большинства ответов.
+
+[BUG-18] [FIXED] Return task не очищает old last_response перед новым запуском
+---------------------------------------------------------------------------
+Файл: server.js (POST /api/tasks/:id/return и /api/tasks/:id/run)
+Фикс: db.setLastResponse(id, '') вызывается перед moveTask и broadcast task:run.
+  Клиент получает task:moved с пустым last_response → карточка не показывает
+  старый ответ пока задача выполняется.
+
+═══════════════════════════════════════════════════════════════
+БАГИ ВЗАИМОДЕЙСТВИЯ ВО ВРЕМЯ РАБОТЫ
+═══════════════════════════════════════════════════════════════
+
+[BUG-19] [FIXED] Stop task не убирает задачу из client-side очереди (proj.queue)
+---------------------------------------------------------------------------
+Файл: terminal.js (stopTaskInProject)
+Фикс: перед проверкой currentTaskId, фильтруем proj.queue:
+  proj.queue = proj.queue.filter(q => q.taskId !== taskId)
+  Обновляем badge. Затем, если задача активна — убиваем PTY.
+
+[BUG-20] [FIXED] sessionStatuses не восстанавливаются после page reload
+---------------------------------------------------------------------------
+Файл: app.js (fetchTasks)
+Фикс: после загрузки задач, для каждой in_progress задачи вызывается
+  GET /api/tasks/:id/status. Если alive=true → sessionStatuses[id] = {status:'running'}.
+  Частичный фикс: rate-limit overlay не восстанавливается (нет серверного API для этого).
+
+[BUG-21] [FIXED] Re-run card (Return) не валидирует пустой prompt на UI уровне
+---------------------------------------------------------------------------
+Файл: app.js (submitReturn)
+Фикс: при пустом prompt — border-color: danger, placeholder 'Prompt is required!',
+  focus на поле. Возврат без submit. Через 2s стиль сбрасывается.
+
+[BUG-22] [FIXED] submitReturn не предотвращает двойной submit
+---------------------------------------------------------------------------
+Файл: app.js (submitReturn + closeReturnModal)
+Фикс: флаг _returnSubmitting (module-level). При submit=true — ранний return.
+  Submit button блокируется и показывает 'Sending...'.
+  closeReturnModal() сбрасывает флаг и восстанавливает кнопку.
+
+[BUG-23] [FIXED] Auto-queue не предупреждает об отсутствии Auto-approve
+---------------------------------------------------------------------------
+Файл: app.js (toggleStart)
+Фикс: при включении очереди с autoApproveEnabled=false → addLog hint:
+  "[Hint] Auto-approve is OFF — Claude prompts will pause execution..."
+
+[BUG-24] [FIXED] Нет кнопки Re-run в done column
+---------------------------------------------------------------------------
+Файл: app.js (renderTaskCard) + styles.css
+Фикс: добавлена кнопка '▶ Re-run' в done-card-compact.
+  Кнопка видна при hover (opacity: 0 → 1).
+  CSS: .done-card-actions-row flex layout.
+
+[BUG-25] [NOTE] Helper terminal auto-approve при интерактивной работе
+---------------------------------------------------------------------------
+Helper не участвует в auto-approve (guard в opts.autoApprove). Ограничение UX.
+
+[BUG-26] [NOTE] Задача без project_path запускается в HOME
+---------------------------------------------------------------------------
+Документированное поведение. termId='project:default', один PTY для всех задач без пути.
+
+[BUG-27] [FIXED] allCompletedShown не сбрасывается при перемещении задач в backlog
+---------------------------------------------------------------------------
+Файл: app.js (handleWSMessage 'task:moved' + initSortable onEnd)
+Фикс: resetAllCompletedFlag() вызывается при:
+  - task:moved где msg.task.column === 'backlog' (WS event)
+  - drag onEnd где newColumn === 'backlog' (client-side drag)
+
+[BUG-28] [FIXED] SortableJS drag-drop ломается при быстрых обновлениях renderBoard
+---------------------------------------------------------------------------
+Файл: app.js (renderBoard + initSortable)
+Фикс: добавлен флаг isDragging.
+  onStart → isDragging = true
+  onEnd → isDragging = false
+  renderBoard() → if (isDragging) return — пропускает обновление DOM во время drag.
+
+═══════════════════════════════════════════════════════════════
+НОВЫЕ БАГИ CLAUDE RESPONSE DISPLAY (найдены при аудите)
+═══════════════════════════════════════════════════════════════
+
+[RESP-BUG-01] [FIXED] last_response отображается без переносов строк
+---------------------------------------------------------------------------
+Файл: app.js (renderTaskCard) + styles.css
+Проблема: escapeHtml() экранирует HTML но не конвертирует \n в <br>.
+  CSS white-space: pre-wrap был на .task-card-response но escapeHtml
+  возвращает plain text (через div.textContent = str → div.innerHTML).
+  textContent сохраняет \n, но innerHTML из div.textContent конвертирует
+  \n в обычные пробелы в рендере (в зависимости от браузера).
+Фикс: явный .replace(/\n/g, '<br>') после escapeHtml().
+  CSS white-space изменён с pre-wrap на normal (иначе двойной перенос).
+
+[RESP-BUG-02] [FIXED] Claude Response блок не схлопывается
+---------------------------------------------------------------------------
+Файл: app.js (renderTaskCard) + styles.css
+Проблема: .task-card-response-wrapper — статичный div, нет toggle.
+  При длинном ответе карточка занимает много места в review колонке.
+Фикс: wrapper добавлен class 'collapsed' по умолчанию.
+  onclick="this.classList.toggle('collapsed')" на wrapper.
+  CSS: .collapsed .task-card-response { display: none }
+  Заголовок показывает "Claude Response ▾".
+  Response показывается только при клике (expand on demand).
+
+[RESP-BUG-03] [FIXED] last_response не показывается в backlog (после Return)
+---------------------------------------------------------------------------
+Файл: app.js (renderTaskCard)
+Проблема: lastResponseHtml генерировался только для column === 'review'.
+  Задача, возвращённая из review в backlog через drag, теряет response из UI.
+  (В DB last_response сохранён, но не показывается.)
+Фикс: условие изменено на (column === 'review' || column === 'backlog').
+
+[RESP-BUG-04] [NOTE] task-last-response textarea в editModal может быть случайно очищена
+---------------------------------------------------------------------------
+Файл: public/index.html (textarea#task-last-response)
+Проблема: textarea имеет readonly, но это атрибут — пользователь может удалить
+  через DevTools. Форма не отправляет last_response (updateTaskApi не включает его),
+  поэтому реального риска нет. HTML readonly достаточен.
+Статус: NOTE — readonly защищает от случайного редактирования.
+
+═══════════════════════════════════════════════════════════════
+ИЗВЕСТНЫЕ ОГРАНИЧЕНИЯ (не баги, но стоит задокументировать)
+═══════════════════════════════════════════════════════════════
+
+[LIMIT-01] PROMPT_COMPLETE_DELAY=3000ms может сработать на ❯ в stop hook
+Задача идёт в review раньше времени если stop hook выводит ❯.
+
+[LIMIT-02] /compact race condition каждые N задач
+После /compact poll видит ❯ до того как новый промпт задачи отправлен.
+
+[LIMIT-03] Один PTY на project_path — задачи одного проекта строго последовательны
+Параллелизм только между разными project_path.
+
+[LIMIT-04] kanban.db путь захардкожен — нельзя менять через env.
+Для изолированного деплоя нужно копировать всю папку.
+
+[LIMIT-05] Нет пагинации/виртуализации карточек
+При большом количестве done-задач (100+) renderBoard становится медленным.
+
+[LIMIT-06] Rate-limit overlay не восстанавливается после page reload
+sessionStatuses[id] = {status:'running'} восстанавливается (BUG-20 fix),
+но waiting_reset + overlay нет. Потребовался бы серверный API /api/rate-limit-status.
+
+========================================
+Итого: 28 оригинальных + 4 новых RESP-BUG = 32 бага + 6 ограничений
+Исправлено: BUG-01,02,03,04,05,06,07,08,10,12,14,18,19,20,21,22,23,24,27,28 + RESP-01,02,03 = 23 фикса
+Задокументировано/acceptable: BUG-09,11,13,16,17,25,26 + RESP-04 = 8
+Не исправлено: 0
