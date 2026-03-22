@@ -4,6 +4,11 @@
   box-sizing: border-box;
 }
 
+html {
+  height: 100%;
+  width: 100%;
+}
+
 :root {
   --bg: #0d1117;
   --surface: #161b22;
@@ -828,79 +833,67 @@ main {
 
 /* Done column compact cards */
 .done-card-compact {
-  padding: 6px 10px;
-  cursor: default;
+  padding: 8px 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .done-card-compact:hover {
   transform: none;
 }
 
-.done-card-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.done-card-row .priority-badge {
-  margin-bottom: 0;
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-
-.done-card-content {
-  flex: 1;
-  min-width: 0;
-}
-
-.done-card-title {
-  font-size: 12px;
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* BUG-24: done card actions row for re-run + view details */
-.done-card-actions-row {
+.done-card-top {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
-  margin-top: 2px;
+  min-height: 22px;
 }
 
-.done-card-link {
-  display: inline-block;
-  font-size: 10px;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: color 0.15s;
+.done-card-top .priority-badge {
+  margin-bottom: 0;
+  flex-shrink: 0;
 }
 
-.done-card-link:hover {
-  color: var(--primary);
+.done-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.done-card-compact:hover .done-card-actions {
+  opacity: 1;
 }
 
 .done-rerun-btn {
   font-size: 10px;
   padding: 1px 6px;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
-
-.done-card-compact:hover .done-rerun-btn {
-  opacity: 1;
-}
-
-.done-card-row .btn-delete-trash {
   flex-shrink: 0;
-  opacity: 0;
-  transition: opacity 0.15s;
-  margin-top: 2px;
 }
 
-.done-card-compact:hover .btn-delete-trash {
-  opacity: 0.6;
+.done-card-action.btn-delete-trash {
+  flex-shrink: 0;
+}
+
+.done-card-title {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.done-card-date {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 /* Priority backgrounds */
@@ -1824,13 +1817,13 @@ body.h-resizing #h-resizer {
 
 /* Kanban Lead panel */
 #kanban-lead-panel {
-  flex: 1;
+  width: 220px;
+  flex: 0 0 220px;
   border-right: 1px solid var(--border);
   background: color-mix(in srgb, var(--primary) 6%, var(--surface));
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
-  min-width: 0;
+  overflow: hidden;
 }
 
 .kl-header {
@@ -1874,6 +1867,8 @@ body.h-resizing #h-resizer {
   flex-direction: column;
   gap: 6px;
   padding: 8px 12px;
+  flex: 1;
+  overflow: hidden;
 }
 
 .kl-body.hidden { display: none; }
@@ -1909,9 +1904,10 @@ body.h-resizing #h-resizer {
   padding: 6px 10px;
   box-sizing: border-box;
   outline: none;
-  resize: vertical;
+  resize: none;
   font-family: inherit;
-  min-height: 60px;
+  min-height: 0;
+  flex: 1;
 }
 
 .kl-textarea:focus { border-color: var(--primary); }

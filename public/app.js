@@ -133,6 +133,7 @@ function connectWS() {
     fetchAutoApprove();
     // BUG-06: re-sync auto-queue state on every reconnect
     fetchAutoQueue();
+    fetchMaxTerminals();
     // Re-attach terminal manager listeners on every (re)connect
     if (window.terminalManager) {
       window.terminalManager._attachWS();
@@ -269,6 +270,11 @@ function handleWSMessage(msg) {
       addLog(`[Settings] Auto-queue: ${msg.enabled ? 'ON' : 'OFF'}`, 'idle');
       autoQueueEnabled = msg.enabled;
       updateStartBtn();
+      break;
+
+    case 'settings:maxTerminals':
+      maxTerminals = msg.value;
+      updateMaxTerminalsUI();
       break;
 
     case 'terminal:spawned':
@@ -430,23 +436,16 @@ function renderTaskCard(task, column) {
   // Compact card for Done column
   if (column === 'done') {
     const priorityBadge = `<span class="priority-badge ${priority}">${PRIORITY_LABELS[priority]}</span>`;
-    const deleteBtn = `<button class="btn-delete-trash" onclick="event.stopPropagation(); deleteTask(${task.id})" title="Delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>`;
-
-    // BUG-24: add Re-run button to done-card-compact
-    const rerunBtn = `<button class="btn btn-sm btn-run done-rerun-btn" onclick="event.stopPropagation(); runTask(${task.id})" title="Re-run this task">▶ Re-run</button>`;
+    const deleteBtn = `<button class="btn-delete-trash done-card-action" onclick="event.stopPropagation(); deleteTask(${task.id})" title="Delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg></button>`;
+    const rerunBtn = `<button class="btn btn-sm btn-run done-rerun-btn done-card-action" onclick="event.stopPropagation(); runTask(${task.id})" title="Re-run this task">▶ Re-run</button>`;
     return `
-      <div class="task-card done-card-compact" data-id="${task.id}" data-priority="${priority}"${statusAttr}>
-        <div class="done-card-row">
+      <div class="task-card done-card-compact" data-id="${task.id}" data-priority="${priority}"${statusAttr} onclick="openEditModal(${task.id})">
+        <div class="done-card-top">
           ${priorityBadge}
-          <div class="done-card-content">
-            <div class="done-card-title">${escapeHtml(task.title)}</div>
-            <div class="done-card-actions-row">
-              <span class="done-card-link" onclick="event.stopPropagation(); openEditModal(${task.id})">View details</span>
-              ${rerunBtn}
-            </div>
-          </div>
-          ${deleteBtn}
+          <div class="done-card-actions">${rerunBtn}${deleteBtn}</div>
         </div>
+        <div class="done-card-title">${escapeHtml(task.title)}</div>
+        ${task.created_at ? `<span class="done-card-date">${formatDate(task.created_at)}</span>` : ''}
       </div>
     `;
   }
@@ -1178,18 +1177,37 @@ function updateAutoApproveBtn() {
 }
 
 async function fetchAutoApprove() {
+  // Reset to OFF on page load/refresh — never restore previous state
   try {
-    const res = await fetch('/api/auto-approve');
+    const res = await fetch('/api/auto-approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: false }),
+    });
     const data = await res.json();
     autoApproveEnabled = data.enabled;
     updateAutoApproveBtn();
   } catch {}
 }
 
-// BUG-05: fetch auto-queue state from server (syncs across tabs)
+async function fetchMaxTerminals() {
+  try {
+    const res = await fetch('/api/max-terminals');
+    const data = await res.json();
+    maxTerminals = data.maxTerminals;
+    localStorage.setItem('maxTerminals', maxTerminals);
+    updateMaxTerminalsUI();
+  } catch {}
+}
+
+// Reset auto-queue to OFF on page load/refresh instead of restoring server state
 async function fetchAutoQueue() {
   try {
-    const res = await fetch('/api/auto-queue');
+    const res = await fetch('/api/auto-queue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: false }),
+    });
     const data = await res.json();
     autoQueueEnabled = data.enabled;
     updateStartBtn();
@@ -1411,6 +1429,11 @@ function setMaxTerminals(n) {
   localStorage.setItem('maxTerminals', maxTerminals);
   updateMaxTerminalsUI();
   addLog(`[MaxTerminals] Set to ${maxTerminals === 0 ? 'unlimited' : maxTerminals}`, 'idle');
+  fetch('/api/max-terminals', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value: maxTerminals }),
+  }).catch(() => {});
 }
 
 function updateMaxTerminalsUI() {
@@ -1518,21 +1541,25 @@ function initResizer() {
     }
   });
 
-  // Restore saved ratio
-  const saved = localStorage.getItem('kanban:vSplit');
-  if (saved) {
+  function applySplit() {
+    const saved = localStorage.getItem('kanban:vSplit');
+    const ratio = saved ? parseFloat(saved) : 0.5;
     const totalWidth = document.querySelector('main').getBoundingClientRect().width;
     const resizerWidth = 5;
-    const kanbanWidth = Math.max(300, Math.min(parseFloat(saved) * totalWidth, totalWidth - 200 - resizerWidth));
+    const kanbanWidth = Math.max(300, Math.min(ratio * totalWidth, totalWidth - 200 - resizerWidth));
     const terminalWidth = totalWidth - kanbanWidth - resizerWidth;
     kanban.style.flex = 'none';
     kanban.style.width = kanbanWidth + 'px';
     terminal.style.flex = 'none';
     terminal.style.width = terminalWidth + 'px';
-    requestAnimationFrame(() => {
-      if (window.terminalManager) window.terminalManager.fitAll();
-    });
+    if (window.terminalManager) window.terminalManager.fitAll();
   }
+
+  // Apply on init
+  requestAnimationFrame(applySplit);
+
+  // Reapply on window resize
+  window.addEventListener('resize', applySplit);
 }
 
 
@@ -1542,7 +1569,7 @@ document.addEventListener('DOMContentLoaded', () => {
   fetchTasks();
   fetchAutoApprove();
   fetchAutoQueue(); // BUG-05: sync auto-queue state on page load
-  updateMaxTerminalsUI();
+  fetchMaxTerminals();
   connectWS();
   initSortable();
   initModal();

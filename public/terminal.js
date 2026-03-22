@@ -677,20 +677,24 @@ class TerminalManager {
       this.fitAll();
     });
 
-    // Restore saved ratio
-    const saved = localStorage.getItem('kanban:hSplit');
-    if (saved) {
-      requestAnimationFrame(() => {
-        const panel = document.getElementById('terminal-panel');
-        const r = panel.getBoundingClientRect();
-        const topH = Math.max(100, Math.min(parseFloat(saved) * r.height, r.height - 105));
-        top.style.flex = 'none';
-        top.style.height = topH + 'px';
-        bottom.style.flex = 'none';
-        bottom.style.height = (r.height - topH - 5) + 'px';
-        this.fitAll();
-      });
-    }
+    const applyHSplit = () => {
+      const saved = localStorage.getItem('kanban:hSplit');
+      const ratio = saved ? parseFloat(saved) : 0.5;
+      const panel = document.getElementById('terminal-panel');
+      const r = panel.getBoundingClientRect();
+      const topH = Math.max(100, Math.min(ratio * r.height, r.height - 105));
+      top.style.flex = 'none';
+      top.style.height = topH + 'px';
+      bottom.style.flex = 'none';
+      bottom.style.height = (r.height - topH - 5) + 'px';
+      this.fitAll();
+    };
+
+    // Apply on init
+    requestAnimationFrame(applyHSplit);
+
+    // Reapply on window resize
+    window.addEventListener('resize', applyHSplit);
   }
 }
 

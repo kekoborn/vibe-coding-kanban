@@ -60,6 +60,7 @@ const PROMPT_COMPLETE_DELAY = 3000; // 3 seconds after Claude prompt detected = 
 const TASK_START_DELAY = 4000; // delay before sending next task prompt (let Claude settle)
 let autoApproveEnabled = false; // toggled from client
 let autoQueueEnabled = false; // BUG-05: server-side auto-queue state (synced across tabs)
+let maxTerminals = 0; // 0 = unlimited; persisted server-side so queue logic works without a tab
 
 // BUG-02: track clientId -> ws mapping for targeted broadcasts
 const clientIdMap = new Map(); // clientId -> ws
@@ -78,13 +79,14 @@ function stripAnsi(str) {
 
 function updateCaffeinate() {
   const inProgress = db.getTasksByColumn('in_progress');
-  const hasActive = inProgress.length > 0;
+  const backlog = autoQueueEnabled ? db.getTasksByColumn('backlog') : [];
+  const hasActive = inProgress.length > 0 || backlog.length > 0;
 
   if (hasActive && !caffeinateProc) {
     caffeinateProc = spawn('caffeinate', ['-i'], { stdio: 'ignore' });
     caffeinateProc.on('error', () => { caffeinateProc = null; });
     caffeinateProc.on('exit', () => { caffeinateProc = null; });
-    console.log(`[Caffeinate] Sleep prevention ON (${inProgress.length} active task(s))`);
+    console.log(`[Caffeinate] Sleep prevention ON (${inProgress.length} active, ${backlog.length} queued)`);
   } else if (!hasActive && caffeinateProc) {
     caffeinateProc.kill();
     caffeinateProc = null;
@@ -174,6 +176,18 @@ app.post('/api/auto-queue', (req, res) => {
 
 app.get('/api/auto-queue', (req, res) => {
   res.json({ enabled: autoQueueEnabled });
+});
+
+app.get('/api/max-terminals', (req, res) => {
+  res.json({ maxTerminals });
+});
+
+app.post('/api/max-terminals', (req, res) => {
+  const value = Math.max(0, parseInt(req.body.value) || 0);
+  maxTerminals = value;
+  console.log(`[MaxTerminals] Set to ${maxTerminals === 0 ? 'unlimited' : maxTerminals}`);
+  broadcast({ type: 'settings:maxTerminals', value: maxTerminals });
+  res.json({ ok: true, maxTerminals });
 });
 
 app.get('/api/skill-status', (req, res) => {
@@ -494,6 +508,83 @@ function completeTaskFromServer(taskId, termId) {
   broadcast({ type: 'session:completed', taskId });
   updateCaffeinate();
   console.log(`[Complete] Task #${taskId} moved to review (idle detection)`);
+  setTimeout(triggerServerAutoQueue, 1000);
+}
+
+function runTaskOnServer(task) {
+  const rawPrompt = buildPromptWithAttachments(task);
+  const projectPath = task.project_path || process.env.HOME;
+  const termId = 'project:' + (task.project_path || 'default');
+
+  db.setLastResponse(task.id, '');
+  const updated = db.moveTask({ id: task.id, column: 'in_progress' });
+  broadcast({ type: 'task:moved', task: updated });
+
+  const existing = globalPtys.get(termId);
+  if (existing && existing.pty) {
+    // Reuse existing session — mirror terminal:continue logic
+    if (existing.meta) {
+      existing.meta.currentTaskId = task.id;
+      existing.meta.running = true;
+    }
+    const prev = termTaskMap.get(termId);
+    if (prev?.idleTimer) clearTimeout(prev.idleTimer);
+    const checkpoint = getJsonlCheckpoint(task.project_path || '');
+    termTaskMap.set(termId, { taskId: task.id, idleTimer: null, lastDataTime: Date.now(), jsonlCheckpoint: checkpoint });
+    console.log(`[ServerAutoQueue] continue termId=${termId} -> taskId=${task.id}, checkpoint line=${checkpoint?.lineOffset ?? 'none'}`);
+
+    const p = existing.pty;
+    const wasAtPrompt = p._claudeAtPrompt?.() || false;
+    if (p._resetWaiting) p._resetWaiting();
+    if (p._state) { p._state.outputBuffer = ''; p._state.lastDataTime = Date.now(); }
+    if (p._promptReset) p._promptReset();
+    termOutputBuffers.delete(termId);
+
+    updateCaffeinate();
+
+    const count = (termTaskCounter.get(termId) || 0) + 1;
+    termTaskCounter.set(termId, count);
+    const safePrompt = rawPrompt.replace(/[\r\n]+/g, ' ').trim();
+
+    if (wasAtPrompt) {
+      if (count % COMPACT_EVERY_N_TASKS === 0) {
+        p.write('/compact\r');
+        setTimeout(() => p.write(safePrompt + '\r'), 3000);
+      } else {
+        setTimeout(() => { p.write(safePrompt); setTimeout(() => p.write('\r'), 200); }, TASK_START_DELAY);
+      }
+    } else {
+      p._setPendingPrompt(safePrompt);
+      setTimeout(() => p._sendPendingNow?.(), TASK_START_DELAY + 5000);
+    }
+
+    // Notify any connected tabs so they can show the terminal
+    broadcast({ type: 'task:run', taskId: task.id, prompt: rawPrompt, autoApprove: true, cwd: projectPath });
+  } else if (clients.size === 0) {
+    // Headless mode — no browser connected, spawn PTY directly on server
+    console.log(`[ServerAutoQueue] Headless spawn for task #${task.id}`);
+    spawnShell(null, termId, { cwd: projectPath, command: 'claude', taskId: task.id, prompt: rawPrompt, autoApprove: true });
+  } else {
+    // Clients connected but no PTY yet — let the browser handle the spawn via task:run
+    broadcast({ type: 'task:run', taskId: task.id, prompt: rawPrompt, autoApprove: true, cwd: projectPath });
+  }
+
+  console.log(`[ServerAutoQueue] Started task #${task.id} "${task.title}"`);
+}
+
+function triggerServerAutoQueue() {
+  if (!autoQueueEnabled) return;
+  const inProgress = db.getTasksByColumn('in_progress');
+  const busyProjects = new Set(inProgress.map(t => t.project_path || ''));
+  const backlog = db.getTasksByColumn('backlog');
+  const started = new Set();
+  for (const task of backlog) {
+    const proj = task.project_path || '';
+    if (busyProjects.has(proj) || started.has(proj)) continue;
+    if (maxTerminals > 0 && (busyProjects.size + started.size) >= maxTerminals) break;
+    started.add(proj);
+    setTimeout(() => runTaskOnServer(task), 500);
+  }
 }
 
 // --- WebSocket ---
@@ -714,8 +805,10 @@ function spawnShell(ws, termId, opts = {}) {
     }
   } catch (err) {
     console.error(`[PTY] spawn failed for ${termId}:`, err.message);
-    if (ws.readyState === WebSocket.OPEN) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'terminal:exit', termId, error: err.message }));
+    } else {
+      broadcast({ type: 'terminal:exit', termId, error: err.message });
     }
     return;
   }
@@ -724,7 +817,7 @@ function spawnShell(ws, termId, opts = {}) {
   globalPtys.set(termId, {
     pty: p,
     replayBuffer: '',
-    subscribers: new Set([ws]),
+    subscribers: ws ? new Set([ws]) : new Set(),
     meta: {
       cwd,
       command: opts.command || null,
@@ -1043,7 +1136,11 @@ function spawnShell(ws, termId, opts = {}) {
   });
 
   console.log(`[PTY] spawned ${termId}: ${cols}x${rows}, pid=${p.pid}`);
-  ws.send(JSON.stringify({ type: 'terminal:spawned', termId }));
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'terminal:spawned', termId }));
+  } else {
+    broadcast({ type: 'terminal:spawned', termId });
+  }
 }
 
 function killShell(termId) {

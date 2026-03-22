@@ -24,13 +24,17 @@ Queue your tasks, press Start, and let Claude Code work through them one by one.
 - Search and filter by text, priority, or project path
 - File and URL attachments on tasks
 - Return a task to In Progress with a new prompt (re-run with context)
+- Done cards show creation date, multi-line title, and hover actions (Re-run, Delete)
 
 **AI Orchestration**
 - Auto-queue: tasks from Backlog start in Claude Code automatically
+- **Server-side auto-queue** — tasks run even when no browser tab is open (headless mode)
+- **MaxTerminals synced across tabs** — limit on parallel terminals is persisted on server and broadcast to all clients
 - Rate-limit detection with countdown timer and auto-resume (sends "continue" when limit resets)
-- Auto-approve mode for Claude Code permission prompts
+- Auto-approve mode for Claude Code permission prompts (resets to OFF on page load for safety)
 - `/compact` every 10 tasks per terminal to conserve context tokens
 - Task stays in **In Progress** during rate limit — moves to Review only after Claude truly finishes
+- `caffeinate` keeps Mac awake while tasks are queued or running
 
 **Terminal Management**
 - Real-time xterm.js terminals with WebGL rendering
@@ -41,7 +45,7 @@ Queue your tasks, press Start, and let Claude Code work through them one by one.
 
 **UX**
 - Dark and light themes
-- Resizable kanban / terminal split panel
+- Resizable kanban / terminal split panel — layout re-adapts on window resize
 - Collapsible columns
 - Real-time logs panel
 
