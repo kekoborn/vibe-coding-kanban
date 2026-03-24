@@ -34,10 +34,20 @@ If there's a CLAUDE.md, README.md, or package.json — read those first.
 
 ### Step 3: Decompose into Tasks
 
-Break the work into **3-8 sequential tasks**. Each task should be:
-- **Atomic**: one clear deliverable per task
-- **Ordered**: tasks should make sense to execute top-to-bottom
-- **Self-contained prompt**: the `description` field IS the prompt that Claude Code will receive — make it detailed enough to execute without context
+Break the work into **5-12 sequential tasks**. Err on the side of more, smaller tasks.
+
+Each task must pass all three checks:
+
+**✓ One operation** — a single logical action: add a function, update a schema, wire up a route, write a test. Not "implement feature X" but "add X handler in Y file".
+
+**✓ Max 2-3 files** — if a task touches more than 3 files, split it. More files = more chances for Claude to lose focus mid-task.
+
+**✓ ~5-15 minutes of work** — if you'd estimate the task at >15 minutes for a human, split it further. Long tasks accumulate context and are harder to retry.
+
+**When to split further:**
+- "implement X" → split into: data model / API handler / UI component / tests
+- "refactor X" → split into: extract function / update callers / update types / cleanup
+- "fix bug in X" → split into: add failing test / fix the code / verify edge cases
 
 **Task description format** — write as a direct instruction to Claude Code:
 ```
@@ -100,7 +110,7 @@ After creating tasks, tell the user:
 - Always ask for the project path — never guess it
 - Always read the project before writing tasks — context matters
 - Task descriptions must be self-contained prompts — Claude Code won't have prior conversation context
-- Keep task count reasonable (3-8). If the work is bigger, suggest splitting into phases
+- Keep tasks small: 5-12 tasks, max 2-3 files per task, ~5-15 min of work each. If the work is bigger, suggest splitting into phases
 - Use position field to ensure correct execution order
 - Each task description should mention which files to modify when possible
 - Include "don't" instructions when there's risk of unwanted changes (e.g., "Don't modify the database schema")
