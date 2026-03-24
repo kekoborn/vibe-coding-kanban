@@ -6,6 +6,17 @@ const db = new Database(path.join(__dirname, 'kanban.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+// Valid column names — 'hold' is a priority level, NOT a column
+const VALID_COLUMNS = ['backlog', 'in_progress', 'review', 'done'];
+const VALID_PRIORITIES = ['high', 'medium', 'low', 'hold'];
+
+function validateColumn(column) {
+  if (!VALID_COLUMNS.includes(column)) {
+    const hint = column === 'hold' ? ' ("hold" is a priority level — set task.priority = "hold" instead)' : '';
+    throw new Error(`Invalid column: "${column}"${hint}. Valid columns: ${VALID_COLUMNS.join(', ')}`);
+  }
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -105,8 +116,20 @@ const getMaxPosition = db.prepare(`
   SELECT COALESCE(MAX(position), -1) as max_pos FROM tasks WHERE "column" = ?
 `);
 
+const normalizePosUpdate = db.prepare(`
+  UPDATE tasks SET position = ?, updated_at = datetime('now') WHERE id = ?
+`);
+
+const normalizePositionsTx = db.transaction((column) => {
+  const tasks = getTasksByColumn.all(column);
+  tasks.forEach((task, idx) => {
+    normalizePosUpdate.run(idx, task.id);
+  });
+});
+
 module.exports = {
   db,
+  VALID_COLUMNS,
 
   getAllTasks() {
     return getAllTasks.all();
@@ -120,7 +143,8 @@ module.exports = {
     return getTasksByColumn.all(column);
   },
 
-  createTask({ title, description = '', column = 'backlog', priority = 'medium', project_path = '', parent_id = null, position = null }) {
+  createTask({ title, description = '', column = 'backlog', priority = 'medium', project_path = '', position = null }) {
+    validateColumn(column);
     const pos = position !== null ? position : getMaxPosition.get(column).max_pos + 1;
     const result = insertTask.run({
       title,
@@ -129,28 +153,31 @@ module.exports = {
       position: pos,
       priority,
       project_path,
-      parent_id,
+      parent_id: null,
     });
     return getTaskById.get(result.lastInsertRowid);
   },
 
-  updateTask({ id, title, description, column, position, priority, project_path, parent_id }) {
+  updateTask({ id, title, description, column, position, priority, project_path }) {
     const existing = getTaskById.get(id);
     if (!existing) return null;
+    const newColumn = column ?? existing.column;
+    validateColumn(newColumn);
     updateTask.run({
       id,
       title: title ?? existing.title,
       description: description ?? existing.description,
-      column: column ?? existing.column,
+      column: newColumn,
       position: position ?? existing.position,
       priority: priority ?? existing.priority,
       project_path: project_path ?? existing.project_path,
-      parent_id: parent_id !== undefined ? parent_id : existing.parent_id,
+      parent_id: existing.parent_id,
     });
     return getTaskById.get(id);
   },
 
   moveTask({ id, column, position }) {
+    validateColumn(column);
     const existing = getTaskById.get(id);
     if (!existing) return null;
     if (position === undefined || position === null) {
@@ -172,6 +199,10 @@ module.exports = {
   },
 
   deleteTask(id) {
-    return deleteTask.run(id);
+    const existing = getTaskById.get(id);
+    const col = existing?.column;
+    const result = deleteTask.run(id);
+    if (col) normalizePositionsTx(col);
+    return result;
   },
 };

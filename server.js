@@ -55,12 +55,16 @@ const termTaskMap = new Map(); // termId -> { taskId, idleTimer, lastDataTime }
 const globalPtys = new Map(); // termId -> { pty, replayBuffer, subscribers: Set<ws>, meta }
 const termTaskCounter = new Map(); // termId -> number of tasks completed (for /compact every N tasks)
 const COMPACT_EVERY_N_TASKS = 10; // send /compact after every N tasks
-const IDLE_COMPLETE_DELAY = 10000; // 10 seconds of no output = task completed
-const PROMPT_COMPLETE_DELAY = 3000; // 3 seconds after Claude prompt detected = completed
+const IDLE_COMPLETE_DELAY = 45000; // 45 seconds of no output = task completed (was 10s — too aggressive)
+const PROMPT_COMPLETE_DELAY = 7000; // 7 seconds after Claude prompt detected = completed
 const TASK_START_DELAY = 4000; // delay before sending next task prompt (let Claude settle)
+const MAX_CONCURRENT_TASKS = 5; // max tasks running simultaneously (0 = unlimited)
 let autoApproveEnabled = false; // toggled from client
 let autoQueueEnabled = false; // BUG-05: server-side auto-queue state (synced across tabs)
 let maxTerminals = 0; // 0 = unlimited; persisted server-side so queue logic works without a tab
+
+// Rate-limited terminals — termIds currently blocked by API rate limit
+const rateLimitedTerms = new Set();
 
 // BUG-02: track clientId -> ws mapping for targeted broadcasts
 const clientIdMap = new Map(); // clientId -> ws
@@ -118,6 +122,9 @@ app.put('/api/tasks/:id', (req, res) => {
 
 app.put('/api/tasks/:id/move', (req, res) => {
   const { column, position } = req.body;
+  if (column && !db.VALID_COLUMNS.includes(column)) {
+    return res.status(400).json({ error: `Invalid column: "${column}". Note: "hold" is a priority level — set priority field instead.` });
+  }
   const task = db.moveTask({ id: parseInt(req.params.id), column, position });
   if (!task) return res.status(404).json({ error: 'not found' });
   broadcast({ type: 'task:moved', task });
@@ -290,6 +297,33 @@ app.post('/api/tasks/:id/run', (req, res) => {
   const task = db.getTaskById(id);
   if (!task) return res.status(404).json({ error: 'not found' });
 
+  // Enforce MAX_CONCURRENT_TASKS limit
+  if (MAX_CONCURRENT_TASKS > 0) {
+    const activeCount = db.getTasksByColumn('in_progress').length;
+    if (activeCount >= MAX_CONCURRENT_TASKS) {
+      return res.status(429).json({
+        error: `Max concurrent tasks reached (${MAX_CONCURRENT_TASKS}). Wait for a running task to complete.`,
+        activeCount,
+        limit: MAX_CONCURRENT_TASKS,
+      });
+    }
+  }
+
+  // Enforce maxTerminals limit — if this task needs a NEW terminal tab and the limit is reached, reject
+  if (maxTerminals > 0) {
+    const termId = 'project:' + (task.project_path || 'default');
+    const needsNewTerminal = !globalPtys.has(termId);
+    // Count only project terminals (exclude helper)
+    const projectPtyCount = [...globalPtys.keys()].filter(k => k.startsWith('project:')).length;
+    if (needsNewTerminal && projectPtyCount >= maxTerminals) {
+      return res.status(429).json({
+        error: `Max terminal tabs reached (${maxTerminals}). Close a tab or increase the Terms limit.`,
+        activeTerminals: projectPtyCount,
+        limit: maxTerminals,
+      });
+    }
+  }
+
   const rawPrompt = buildPromptWithAttachments(task);
   const projectPath = task.project_path || process.env.HOME;
 
@@ -373,6 +407,9 @@ app.post('/api/tasks/:id/stop', (req, res) => {
 app.post('/api/tasks/:id/stop-move', (req, res) => {
   const id = parseInt(req.params.id);
   const { column, position } = req.body;
+  if (column && !db.VALID_COLUMNS.includes(column)) {
+    return res.status(400).json({ error: `Invalid column: "${column}". Note: "hold" is a priority level — set priority field instead.` });
+  }
   const task = db.getTaskById(id);
   if (!task) return res.status(404).json({ error: 'not found' });
 
@@ -580,7 +617,15 @@ function triggerServerAutoQueue() {
   const started = new Set();
   for (const task of backlog) {
     const proj = task.project_path || '';
+    const termId = 'project:' + (proj || 'default');
     if (busyProjects.has(proj) || started.has(proj)) continue;
+    // Skip terminals currently blocked by rate limit
+    if (rateLimitedTerms.has(termId)) {
+      console.log(`[AutoQueue] skipping task #${task.id} — terminal ${termId} is rate-limited`);
+      continue;
+    }
+    // Enforce MAX_CONCURRENT_TASKS
+    if (MAX_CONCURRENT_TASKS > 0 && (busyProjects.size + started.size) >= MAX_CONCURRENT_TASKS) break;
     if (maxTerminals > 0 && (busyProjects.size + started.size) >= maxTerminals) break;
     started.add(proj);
     setTimeout(() => runTaskOnServer(task), 500);
@@ -873,6 +918,7 @@ function spawnShell(ws, termId, opts = {}) {
   let rateLimitTimer = null;
   let promptSeenSince = null; // timestamp when Claude's input prompt was first detected
   let rateLimitDetected = false; // sticky flag — set in onData, not lost when buffer rotates
+  let rateLimitFirstDetectedAt = null; // when rate limit was first seen — used to wait for full message
   let promptApproveTimer = null; // debounce for auto-approve in onData
 
   if (opts.autoApprove && opts.taskId) {
@@ -922,13 +968,19 @@ function spawnShell(ws, termId, opts = {}) {
       const isRateLimited = rateLimitDetected || nospaceNorm.includes('youvehityourlimit') || nospace.includes('you\'vehityourlimit');
 
       if (isRateLimited && !rateLimitUntil) {
-        const timeMatch = norm.match(/resets?\s*(\d{1,2}(?::\d{2})?\s*(?:[ap]m))/i)
+        const timeMatch = norm.match(/reset[^.\n]*?(\d{1,2}(?::\d{2})?\s*[ap]m)/i)
           || norm.match(/(\d{1,2}:\d{2}\s*(?:[ap]m)?)/i)
-          || nospace.match(/resets?(\d{1,2}(?::\d{2})?[ap]m)/i);
+          || norm.match(/(\d{1,2}\s*[ap]m)/i)
+          || nospace.match(/reset[^.]*?(\d{1,2}(?::\d{2})?[ap]m)/i);
         let resetTime;
         if (timeMatch) {
           resetTime = parseResetTime(timeMatch[1]);
+          rateLimitFirstDetectedAt = null; // found — reset for next time
         } else {
+          // Time not in buffer yet — give up to 15s for the full message to arrive
+          if (!rateLimitFirstDetectedAt) rateLimitFirstDetectedAt = Date.now();
+          if (Date.now() - rateLimitFirstDetectedAt < 15000) return; // retry next poll
+          rateLimitFirstDetectedAt = null;
           resetTime = Date.now() + 30 * 60 * 1000;
         }
 
@@ -937,6 +989,9 @@ function spawnShell(ws, termId, opts = {}) {
 
         // Task stays in_progress — wait for rate limit reset, then send "continue"
         console.log(`[RateLimit] ${termId}: detected! Task #${currentTaskId} stays in_progress. Reset at ${new Date(resetTime).toLocaleTimeString()}, continue at ${new Date(continueAt).toLocaleTimeString()}`);
+
+        // Block new task starts for this terminal globally
+        rateLimitedTerms.add(termId);
 
         broadcast({
           type: 'ratelimit:detected',
@@ -950,8 +1005,12 @@ function spawnShell(ws, termId, opts = {}) {
         rateLimitTimer = setTimeout(() => {
           rateLimitUntil = null;
           rateLimitDetected = false;
+          rateLimitFirstDetectedAt = null;
           ptyState.lastDataTime = Date.now();
           ptyState.outputBuffer = '';
+
+          // Unblock this terminal for new tasks
+          rateLimitedTerms.delete(termId);
 
           // Send continue prompt to Claude Code
           try { p.write('continue\r'); } catch {}
@@ -968,7 +1027,10 @@ function spawnShell(ws, termId, opts = {}) {
       }
 
       // --- Permission prompt detection ---
-      const isPrompt = hasPrompt(norm, nospace);
+      // Only check the tail of the output — prompts appear at the end, not mid-stream
+      const promptWindow = norm.slice(-200);
+      const promptWindowNospace = promptWindow.replace(/\s+/g, '').toLowerCase();
+      const isPrompt = hasPrompt(promptWindow, promptWindowNospace);
 
       if (autoApproveEnabled && isPrompt) {
         console.log(`[AutoApprove] ${termId}: prompt detected (idle ${idleSeconds.toFixed(0)}s), sending Enter`);
@@ -982,13 +1044,17 @@ function spawnShell(ws, termId, opts = {}) {
       if (!rateLimitUntil) {
         const lines = norm.split('\n').filter(l => l.trim());
         // Claude Code shows ❯ as input prompt, but status bar lines appear below it
-        // Check last 5 lines for the prompt character
-        const recentLines = lines.slice(-15);
+        // Only check the last 4 lines to avoid false positives from ❯ in earlier tool output
+        const recentLines = lines.slice(-4);
         // Only match bare ❯ (idle input prompt), not ❯ followed by echoed task text
         // e.g. "❯ Review /Users/..." is echoed input, NOT an idle prompt
         const isClaudeReady = recentLines.some(l => /^❯\s*$/.test(l.trim()));
 
-        if (isClaudeReady && !isPrompt) {
+        // Detect active Claude work patterns — tool calls, spinners, running indicators
+        const claudeWorking = /[⎿↳●◆⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]|Running\b|Bash\s*\(|Read\s*\(|Write\s*\(|Edit\s*\(|Glob\s*\(|Grep\s*\(|Task\s*\(|WebFetch\s*\(|LS\s*\(/
+          .test(clean.slice(-800));
+
+        if (isClaudeReady && !isPrompt && !claudeWorking && idleSeconds >= 3) {
           claudeAtPrompt = true;
           if (!promptSeenSince) {
             promptSeenSince = Date.now();
@@ -1064,6 +1130,9 @@ function spawnShell(ws, termId, opts = {}) {
 
     if (!opts.autoApprove) return;
 
+    // Any new output means Claude is still working — reset prompt completion timer
+    promptSeenSince = null;
+
     // Sticky rate limit detection — catch it in onData before buffer rotates
     if (!rateLimitDetected) {
       const stripped = stripAnsi(data).replace(/\s+/g, '').toLowerCase().replace(/[\u2018\u2019']/g, '');
@@ -1077,8 +1146,9 @@ function spawnShell(ws, termId, opts = {}) {
     if (autoApproveEnabled && !rateLimitUntil && !waitingForClaude) {
       const clean = stripAnsi(data);
       const nospaceClean = clean.replace(/\s+/g, '').toLowerCase();
-      // Also check accumulated buffer — permission prompts span multiple onData chunks
-      const bufSample = stripAnsi(ptyState.outputBuffer.slice(-600)).replace(/\r/g, '');
+      // Check last 150 chars of buffer — permission prompts appear at the END of output,
+      // not in the middle. Smaller window prevents false positives on Claude's conversational text.
+      const bufSample = stripAnsi(ptyState.outputBuffer.slice(-150)).replace(/\r/g, '');
       const bufNospace = bufSample.replace(/\s+/g, '').toLowerCase();
       if (hasPrompt(clean, nospaceClean) || hasPrompt(bufSample, bufNospace)) {
         if (!promptApproveTimer) {
@@ -1114,6 +1184,8 @@ function spawnShell(ws, termId, opts = {}) {
     if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
     if (rateLimitTimer) { clearTimeout(rateLimitTimer); rateLimitTimer = null; }
     if (promptApproveTimer) { clearTimeout(promptApproveTimer); promptApproveTimer = null; }
+    // Unblock rate limit tracking for this terminal
+    rateLimitedTerms.delete(termId);
     // If task was still mapped (not stopped), complete it
     const entry = termTaskMap.get(termId);
     if (entry?.taskId) {
@@ -1294,6 +1366,15 @@ function parseResetTime(timeStr) {
 
 
 // --- Start ---
+
+// On startup, reset any tasks stuck in in_progress — their PTY processes no longer exist
+(function cleanupStuckTasks() {
+  const stuck = db.getTasksByColumn('in_progress');
+  if (stuck.length > 0) {
+    stuck.forEach(task => db.moveTask({ id: task.id, column: 'backlog' }));
+    console.log(`[Startup] Moved ${stuck.length} stuck in_progress task(s) back to backlog`);
+  }
+})();
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {

@@ -230,6 +230,15 @@ class TerminalManager {
       return this.projects.get(projectPath);
     }
 
+    // Check maxTerminals before creating a new tab (0 = unlimited)
+    const limit = typeof maxTerminals !== 'undefined' ? maxTerminals : 0;
+    if (limit > 0 && this.projects.size >= limit) {
+      const msg = `[MaxTerminals] Cannot open new tab — limit is ${limit}. Close a tab or increase the Terms limit.`;
+      console.warn(msg);
+      if (typeof addLog === 'function') addLog(msg, 'error');
+      return null;
+    }
+
     const termId = this._getTermId(projectPath);
     const tabTitle = this._getTabTitle(projectPath);
 
@@ -347,6 +356,11 @@ class TerminalManager {
   runInTaskTerminal(taskId, command, cwd, prompt) {
     const projectPath = cwd || '';
     const proj = this._getOrCreateProjectTerminal(projectPath);
+    if (!proj) {
+      // Terminal limit reached — _getOrCreateProjectTerminal already logged the error
+      console.warn(`[Terminal] Skipping task #${taskId} — terminal limit reached`);
+      return;
+    }
     const logMsg = `[Terminal] runTask #${taskId}: running=${proj.running}, sessionAlive=${proj.sessionAlive}, queue=${proj.queue.length}`;
     console.log(logMsg);
     if (typeof addLog === 'function') addLog(logMsg, 'client');

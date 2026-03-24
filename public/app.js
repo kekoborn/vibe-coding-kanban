@@ -103,11 +103,17 @@ async function moveTask(id, column, position) {
 
 async function runTask(id) {
   // BUG-02: pass clientId so server broadcasts task:run only to this tab
-  await fetch(`/api/tasks/${id}/run`, {
+  const res = await fetch(`/api/tasks/${id}/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ clientId: CLIENT_ID }),
   });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const msg = data.error || `Failed to run task (${res.status})`;
+    addLog(`[Error] ${msg}`, 'error');
+    console.error('[runTask]', msg);
+  }
 }
 
 async function stopTask(id) {
