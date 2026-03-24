@@ -57,6 +57,24 @@ try {
   db.exec(`ALTER TABLE tasks ADD COLUMN attachments TEXT DEFAULT '[]'`);
 } catch {}
 
+// Migration: analytics columns
+try { db.exec(`ALTER TABLE tasks ADD COLUMN started_at TEXT DEFAULT NULL`); } catch {}
+try { db.exec(`ALTER TABLE tasks ADD COLUMN completed_at TEXT DEFAULT NULL`); } catch {}
+try { db.exec(`ALTER TABLE tasks ADD COLUMN return_count INTEGER DEFAULT 0`); } catch {}
+
+// Analytics events table
+db.exec(`
+  CREATE TABLE IF NOT EXISTS task_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER,
+    event_type TEXT NOT NULL,
+    timestamp TEXT DEFAULT (datetime('now')),
+    data TEXT DEFAULT '{}'
+  )
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_events_date ON task_events (date(timestamp))`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_events_task ON task_events (task_id)`);
+
 const getAllTasks = db.prepare(`
   SELECT * FROM tasks ORDER BY "column",
     CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 WHEN 'hold' THEN 3 END,
@@ -96,8 +114,18 @@ const moveTask = db.prepare(`
   SET "column" = @column,
       position = @position,
       column_changed_at = datetime('now'),
+      started_at   = CASE WHEN @column = 'in_progress' AND started_at IS NULL THEN datetime('now') ELSE started_at END,
+      completed_at = CASE WHEN @column IN ('review', 'done') THEN datetime('now') ELSE completed_at END,
       updated_at = datetime('now')
   WHERE id = @id
+`);
+
+const incrementReturnCount = db.prepare(`
+  UPDATE tasks SET return_count = return_count + 1, started_at = datetime('now'), updated_at = datetime('now') WHERE id = ?
+`);
+
+const insertEvent = db.prepare(`
+  INSERT INTO task_events (task_id, event_type, data) VALUES (?, ?, ?)
 `);
 
 const deleteTask = db.prepare(`
@@ -180,11 +208,13 @@ module.exports = {
     validateColumn(column);
     const existing = getTaskById.get(id);
     if (!existing) return null;
+    const isReturn = existing.column === 'review' && column === 'in_progress';
     if (position === undefined || position === null) {
       const maxPos = getMaxPosition.get(column).max_pos;
       position = maxPos + 1;
     }
     moveTask.run({ id, column, position });
+    if (isReturn) incrementReturnCount.run(id);
     return getTaskById.get(id);
   },
 
@@ -204,5 +234,97 @@ module.exports = {
     const result = deleteTask.run(id);
     if (col) normalizePositionsTx(col);
     return result;
+  },
+
+  // --- Analytics ---
+
+  logEvent(taskId, eventType, data = {}) {
+    try {
+      insertEvent.run(taskId ?? null, eventType, JSON.stringify(data));
+    } catch (err) {
+      console.error('[Analytics] logEvent failed:', err.message);
+    }
+  },
+
+  getDailyAnalytics(date) {
+    // date: 'YYYY-MM-DD', defaults to today
+    const d = date || new Date().toISOString().slice(0, 10);
+
+    // Tasks active on this date: started or created on this day
+    const tasks = db.prepare(`
+      SELECT
+        t.*,
+        CASE
+          WHEN t.started_at IS NOT NULL AND t.completed_at IS NOT NULL
+          THEN CAST((julianday(t.completed_at) - julianday(t.started_at)) * 86400 AS INTEGER)
+          ELSE NULL
+        END AS execution_seconds,
+        CASE
+          WHEN t.started_at IS NOT NULL
+          THEN CAST((julianday(t.started_at) - julianday(t.created_at)) * 86400 AS INTEGER)
+          ELSE NULL
+        END AS queue_seconds
+      FROM tasks t
+      WHERE date(t.started_at) = ? OR (t.started_at IS NULL AND date(t.created_at) = ?)
+      ORDER BY t.started_at, t.created_at
+    `).all(d, d);
+
+    // All events for this date
+    const events = db.prepare(`
+      SELECT e.*, t.title as task_title, t.project_path
+      FROM task_events e
+      LEFT JOIN tasks t ON t.id = e.task_id
+      WHERE date(e.timestamp) = ?
+      ORDER BY e.timestamp
+    `).all(d);
+
+    // Aggregate stats
+    const completed = tasks.filter(t => t.completed_at && t.started_at);
+    const avgExecution = completed.length
+      ? Math.round(completed.reduce((s, t) => s + (t.execution_seconds || 0), 0) / completed.length)
+      : null;
+
+    const rateLimitEvents = events.filter(e => e.event_type === 'rate_limited');
+    const autoApproveCount = events.filter(e => e.event_type === 'auto_approved').length;
+    const compactCount = events.filter(e => e.event_type === 'compact').length;
+    const returnedTasks = tasks.filter(t => t.return_count > 0);
+
+    // Problem flags per task
+    const tasksWithFlags = tasks.map(t => {
+      const taskEvents = events.filter(e => e.task_id === t.id);
+      const completionEvent = taskEvents.find(e => e.event_type === 'completed');
+      const completionData = completionEvent ? JSON.parse(completionEvent.data || '{}') : {};
+      const flags = [];
+      if (completionData.completion_type === 'idle_timeout' && (completionData.response_length || 0) < 100) {
+        flags.push('short_idle');
+      }
+      if (t.return_count > 1) flags.push('multi_return');
+      if (t.execution_seconds > 900) flags.push('slow'); // >15min
+      if (completionData.completion_type === 'process_exit') flags.push('crashed');
+      return { ...t, flags, completionData };
+    });
+
+    return {
+      date: d,
+      summary: {
+        tasks_started: tasks.filter(t => t.started_at).length,
+        tasks_completed: completed.length,
+        tasks_returned: returnedTasks.length,
+        avg_execution_seconds: avgExecution,
+        rate_limit_count: rateLimitEvents.length,
+        auto_approve_count: autoApproveCount,
+        compact_count: compactCount,
+        problem_count: tasksWithFlags.filter(t => t.flags.length > 0).length,
+      },
+      tasks: tasksWithFlags,
+      events,
+      rate_limits: rateLimitEvents.map(e => ({ ...e, data: JSON.parse(e.data || '{}') })),
+    };
+  },
+
+  getEventsByTask(taskId) {
+    return db.prepare(`
+      SELECT * FROM task_events WHERE task_id = ? ORDER BY timestamp
+    `).all(taskId);
   },
 };

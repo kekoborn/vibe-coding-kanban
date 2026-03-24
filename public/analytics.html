@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Kanban Analytics</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d1117;
+      --bg2: #161b22;
+      --bg3: #21262d;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text2: #8b949e;
+      --text3: #6e7681;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --yellow: #d29922;
+      --red: #f85149;
+      --purple: #bc8cff;
+      --orange: #ffa657;
+    }
+
+    body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; font-size: 14px; line-height: 1.5; }
+
+    .page { max-width: 1100px; margin: 0 auto; padding: 32px 24px; }
+
+    /* Header */
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+    .header-left { display: flex; align-items: center; gap: 16px; }
+    .header h1 { font-size: 20px; font-weight: 600; }
+    .back-link { color: var(--text2); text-decoration: none; font-size: 13px; }
+    .back-link:hover { color: var(--accent); }
+    .date-nav { display: flex; align-items: center; gap: 8px; }
+    .date-nav button { background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+    .date-nav button:hover { border-color: var(--accent); color: var(--accent); }
+    .date-nav input[type=date] { background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 5px 10px; border-radius: 6px; font-size: 13px; font-family: inherit; }
+    #today-btn { background: var(--accent); color: #0d1117; border-color: var(--accent); font-weight: 500; }
+
+    /* Summary row */
+    .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 28px; }
+    .stat-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+    .stat-card.problem { border-color: var(--red); }
+    .stat-value { font-size: 28px; font-weight: 700; line-height: 1; }
+    .stat-value.green { color: var(--green); }
+    .stat-value.yellow { color: var(--yellow); }
+    .stat-value.red { color: var(--red); }
+    .stat-value.purple { color: var(--purple); }
+    .stat-value.blue { color: var(--accent); }
+    .stat-label { font-size: 12px; color: var(--text2); margin-top: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+    /* Sections */
+    .section { margin-bottom: 32px; }
+    .section-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.05em; }
+
+    /* Task table */
+    .task-table { width: 100%; border-collapse: collapse; }
+    .task-table th { text-align: left; padding: 8px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text3); border-bottom: 1px solid var(--border); font-weight: 500; }
+    .task-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    .task-table tr:last-child td { border-bottom: none; }
+    .task-table tr:hover td { background: var(--bg3); }
+    .task-table tbody { background: var(--bg2); border-radius: 8px; overflow: hidden; }
+    .task-table-wrap { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+
+    .task-title { font-weight: 500; font-size: 13px; max-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .task-project { font-size: 11px; color: var(--text3); font-family: monospace; max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .task-row.flagged td:first-child { border-left: 3px solid var(--red); }
+    .task-row.returned td:first-child { border-left: 3px solid var(--yellow); }
+
+    /* Badges */
+    .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 500; white-space: nowrap; }
+    .badge-prompt { background: rgba(63,185,80,.15); color: var(--green); }
+    .badge-idle { background: rgba(210,153,34,.15); color: var(--yellow); }
+    .badge-exit { background: rgba(248,81,73,.15); color: var(--red); }
+    .badge-none { background: var(--bg3); color: var(--text3); }
+    .badge-high { background: rgba(248,81,73,.15); color: var(--red); }
+    .badge-medium { background: rgba(210,153,34,.15); color: var(--yellow); }
+    .badge-low { background: rgba(63,185,80,.15); color: var(--green); }
+    .badge-hold { background: rgba(139,148,158,.15); color: var(--text2); }
+
+    /* Flags */
+    .flags { display: flex; gap: 4px; flex-wrap: wrap; }
+    .flag { display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; }
+    .flag-slow { background: rgba(255,166,87,.15); color: var(--orange); }
+    .flag-short_idle { background: rgba(248,81,73,.15); color: var(--red); }
+    .flag-multi_return { background: rgba(210,153,34,.15); color: var(--yellow); }
+    .flag-crashed { background: rgba(248,81,73,.2); color: var(--red); border: 1px solid var(--red); }
+
+    /* Events timeline */
+    .events-list { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .event-item { display: flex; align-items: flex-start; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+    .event-item:last-child { border-bottom: none; }
+    .event-time { font-size: 11px; color: var(--text3); font-family: monospace; white-space: nowrap; min-width: 52px; padding-top: 2px; }
+    .event-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 5px; }
+    .event-dot.started { background: var(--accent); }
+    .event-dot.completed { background: var(--green); }
+    .event-dot.returned { background: var(--yellow); }
+    .event-dot.rate_limited { background: var(--red); }
+    .event-dot.rate_limit_resolved { background: var(--green); }
+    .event-dot.auto_approved { background: var(--purple); }
+    .event-dot.compact { background: var(--text3); }
+    .event-dot.stuck_reset { background: var(--orange); }
+    .event-dot.process_exit { background: var(--red); }
+    .event-dot.created { background: var(--text3); }
+    .event-body { flex: 1; min-width: 0; }
+    .event-type { font-size: 12px; font-weight: 500; }
+    .event-detail { font-size: 12px; color: var(--text2); margin-top: 2px; }
+    .event-task { font-size: 11px; color: var(--text3); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Rate limit section */
+    .rl-item { background: var(--bg2); border: 1px solid var(--border); border-left: 3px solid var(--red); border-radius: 8px; padding: 12px 16px; margin-bottom: 8px; display: flex; gap: 24px; flex-wrap: wrap; }
+    .rl-field { font-size: 12px; }
+    .rl-label { color: var(--text3); margin-bottom: 2px; font-size: 11px; }
+    .rl-value { color: var(--text); font-weight: 500; }
+
+    /* Empty state */
+    .empty { text-align: center; padding: 40px; color: var(--text3); font-size: 13px; }
+
+    /* Time */
+    .time-val { font-family: monospace; font-size: 13px; }
+    .time-val.fast { color: var(--green); }
+    .time-val.ok { color: var(--text); }
+    .time-val.slow { color: var(--yellow); }
+    .time-val.very-slow { color: var(--red); }
+
+    /* Spinner */
+    .loading { text-align: center; padding: 60px; color: var(--text3); }
+
+    /* Tabs for event filter */
+    .event-filters { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+    .event-filter { background: var(--bg3); border: 1px solid var(--border); color: var(--text2); padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+    .event-filter.active { background: var(--accent); color: #0d1117; border-color: var(--accent); font-weight: 500; }
+
+    @media (max-width: 640px) {
+      .summary { grid-template-columns: repeat(2, 1fr); }
+      .task-table th:nth-child(n+4), .task-table td:nth-child(n+4) { display: none; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <div class="header">
+    <div class="header-left">
+      <a href="/" class="back-link">← Kanban</a>
+      <h1>Analytics</h1>
+    </div>
+    <div class="date-nav">
+      <button id="prev-btn">‹</button>
+      <input type="date" id="date-input">
+      <button id="next-btn">›</button>
+      <button id="today-btn">Today</button>
+    </div>
+  </div>
+
+  <div id="root"><div class="loading">Loading…</div></div>
+
+</div>
+
+<script>
+  let currentDate = new Date().toISOString().slice(0, 10);
+  let allEvents = [];
+  let eventFilter = 'all';
+
+  const dateInput = document.getElementById('date-input');
+  dateInput.value = currentDate;
+  dateInput.addEventListener('change', () => { currentDate = dateInput.value; load(); });
+  document.getElementById('today-btn').addEventListener('click', () => {
+    currentDate = new Date().toISOString().slice(0, 10);
+    dateInput.value = currentDate;
+    load();
+  });
+  document.getElementById('prev-btn').addEventListener('click', () => {
+    const d = new Date(currentDate + 'T12:00:00');
+    d.setDate(d.getDate() - 1);
+    currentDate = d.toISOString().slice(0, 10);
+    dateInput.value = currentDate;
+    load();
+  });
+  document.getElementById('next-btn').addEventListener('click', () => {
+    const d = new Date(currentDate + 'T12:00:00');
+    d.setDate(d.getDate() + 1);
+    currentDate = d.toISOString().slice(0, 10);
+    dateInput.value = currentDate;
+    load();
+  });
+
+  function fmtSeconds(s) {
+    if (s == null) return '—';
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.round(s / 60) + 'm';
+    return (s / 3600).toFixed(1) + 'h';
+  }
+
+  function timeClass(s) {
+    if (s == null) return '';
+    if (s < 120) return 'fast';
+    if (s < 600) return 'ok';
+    if (s < 900) return 'slow';
+    return 'very-slow';
+  }
+
+  function fmtTime(ts) {
+    if (!ts) return '—';
+    return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  function escHtml(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function projectShort(p) {
+    if (!p) return 'HOME';
+    const parts = p.split('/');
+    return parts[parts.length - 1] || p;
+  }
+
+  function completionBadge(type) {
+    if (!type) return `<span class="badge badge-none">—</span>`;
+    const map = {
+      prompt_detected: ['badge-prompt', '✓ prompt'],
+      idle_timeout:    ['badge-idle',   '⏱ idle'],
+      process_exit:    ['badge-exit',   '✗ exit'],
+    };
+    const [cls, label] = map[type] || ['badge-none', type];
+    return `<span class="badge ${cls}">${label}</span>`;
+  }
+
+  function flagBadges(flags) {
+    if (!flags || !flags.length) return '';
+    const labels = { slow: '🐢 slow', short_idle: '⚠ idle+short', multi_return: '↩ multi-return', crashed: '💥 crash' };
+    return flags.map(f => `<span class="flag flag-${f}">${labels[f] || f}</span>`).join('');
+  }
+
+  function eventDotType(type) {
+    return type || 'created';
+  }
+
+  function eventLabel(e) {
+    const data = typeof e.data === 'string' ? JSON.parse(e.data || '{}') : (e.data || {});
+    const labels = {
+      created: 'Task created',
+      started: `Started${data.queue_seconds != null ? ` (queued ${fmtSeconds(data.queue_seconds)})` : ''}`,
+      completed: `Completed — ${data.completion_type || '?'}, response ${data.response_length || 0} chars, ${fmtSeconds(data.execution_seconds)}`,
+      returned: `Returned to queue (return #${data.return_count || '?'})`,
+      rate_limited: `Rate limit — wait ${data.wait_minutes || '?'}min (reset ${data.reset_time ? fmtTime(data.reset_time) : '?'})`,
+      rate_limit_resolved: `Rate limit resolved`,
+      auto_approved: `Auto-approved (${data.source || '?'})`,
+      compact: `/compact sent after ${data.task_count || '?'} tasks`,
+      stuck_reset: `Stuck task reset to backlog on startup`,
+      process_exit: `Process exited (code ${data.exit_code ?? '?'})`,
+    };
+    return labels[e.event_type] || e.event_type;
+  }
+
+  const EVENT_TYPES_IMPORTANT = ['started','completed','returned','rate_limited','rate_limit_resolved','stuck_reset','process_exit'];
+
+  function renderEvents(events) {
+    const filtered = eventFilter === 'all' ? events : events.filter(e => e.event_type === eventFilter);
+    if (!filtered.length) return '<div class="empty">No events</div>';
+    return filtered.map(e => `
+      <div class="event-item">
+        <div class="event-time">${fmtTime(e.timestamp)}</div>
+        <div class="event-dot ${eventDotType(e.event_type)}"></div>
+        <div class="event-body">
+          <div class="event-type">${escHtml(eventLabel(e))}</div>
+          ${e.task_title ? `<div class="event-task">#${e.task_id} ${escHtml(e.task_title)}</div>` : ''}
+        </div>
+      </div>`).join('');
+  }
+
+  document.addEventListener('click', e => {
+    const btn = e.target.closest('.event-filter');
+    if (!btn) return;
+    eventFilter = btn.dataset.type;
+    document.querySelectorAll('.event-filter').forEach(b => b.classList.toggle('active', b.dataset.type === eventFilter));
+    document.getElementById('events-list').innerHTML = renderEvents(allEvents);
+  });
+
+  async function load() {
+    document.getElementById('root').innerHTML = '<div class="loading">Loading…</div>';
+    try {
+      const res = await fetch(`/api/analytics/daily?date=${currentDate}`);
+      const data = await res.json();
+      render(data);
+    } catch (err) {
+      document.getElementById('root').innerHTML = `<div class="empty">Error: ${err.message}</div>`;
+    }
+  }
+
+  function render(data) {
+    const s = data.summary;
+    allEvents = data.events || [];
+
+    const avgExec = s.avg_execution_seconds != null ? fmtSeconds(s.avg_execution_seconds) : '—';
+
+    const summaryHtml = `
+      <div class="summary">
+        <div class="stat-card">
+          <div class="stat-value blue">${s.tasks_completed}</div>
+          <div class="stat-label">Completed</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value green">${s.tasks_started}</div>
+          <div class="stat-label">Started</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value">${avgExec}</div>
+          <div class="stat-label">Avg exec time</div>
+        </div>
+        <div class="stat-card ${s.rate_limit_count > 0 ? 'problem' : ''}">
+          <div class="stat-value ${s.rate_limit_count > 0 ? 'red' : ''}">${s.rate_limit_count}</div>
+          <div class="stat-label">Rate limits</div>
+        </div>
+        <div class="stat-card ${s.tasks_returned > 0 ? '' : ''}">
+          <div class="stat-value ${s.tasks_returned > 0 ? 'yellow' : ''}">${s.tasks_returned}</div>
+          <div class="stat-label">Returned</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value purple">${s.auto_approve_count}</div>
+          <div class="stat-label">Auto-approved</div>
+        </div>
+        <div class="stat-card ${s.problem_count > 0 ? 'problem' : ''}">
+          <div class="stat-value ${s.problem_count > 0 ? 'red' : ''}">${s.problem_count}</div>
+          <div class="stat-label">Problems</div>
+        </div>
+      </div>`;
+
+    // Task table
+    const taskRows = (data.tasks || []).map(t => {
+      const rowClass = t.flags.length > 0 ? 'flagged' : (t.return_count > 0 ? 'returned' : '');
+      return `<tr class="task-row ${rowClass}">
+        <td>
+          <div class="task-title" title="${escHtml(t.title)}">${escHtml(t.title)}</div>
+          <div class="task-project" title="${escHtml(t.project_path)}">${escHtml(projectShort(t.project_path))}</div>
+        </td>
+        <td><span class="badge badge-${t.priority}">${t.priority}</span></td>
+        <td><span class="time-val">${fmtSeconds(t.queue_seconds)}</span></td>
+        <td><span class="time-val ${timeClass(t.execution_seconds)}">${fmtSeconds(t.execution_seconds)}</span></td>
+        <td>${completionBadge(t.completionData?.completion_type)}</td>
+        <td>${t.return_count > 0 ? `<span style="color:var(--yellow);font-weight:600">${t.return_count}</span>` : '—'}</td>
+        <td>${t.completionData?.response_length > 0 ? t.completionData.response_length + ' ch' : '—'}</td>
+        <td><div class="flags">${flagBadges(t.flags)}</div></td>
+      </tr>`;
+    }).join('');
+
+    const taskTableHtml = data.tasks.length === 0
+      ? '<div class="empty">No tasks on this date</div>'
+      : `<div class="task-table-wrap"><table class="task-table">
+          <thead><tr>
+            <th>Task</th><th>Priority</th><th>Queued</th><th>Exec time</th><th>Completion</th><th>Returns</th><th>Response</th><th>Flags</th>
+          </tr></thead>
+          <tbody>${taskRows}</tbody>
+        </table></div>`;
+
+    // Rate limits section
+    const rlHtml = data.rate_limits.length === 0
+      ? '<div class="empty" style="padding:20px">No rate limits on this date 🎉</div>'
+      : data.rate_limits.map(rl => {
+          const d = rl.data || {};
+          return `<div class="rl-item">
+            <div class="rl-field"><div class="rl-label">Time</div><div class="rl-value">${fmtTime(rl.timestamp)}</div></div>
+            <div class="rl-field"><div class="rl-label">Wait</div><div class="rl-value">${d.wait_minutes != null ? d.wait_minutes + ' min' : '—'}</div></div>
+            <div class="rl-field"><div class="rl-label">Reset at</div><div class="rl-value">${d.reset_time ? fmtTime(d.reset_time) : '—'}</div></div>
+            <div class="rl-field"><div class="rl-label">Task</div><div class="rl-value">${rl.task_title ? escHtml(rl.task_title) : '—'}</div></div>
+            <div class="rl-field"><div class="rl-label">Terminal</div><div class="rl-value" style="font-family:monospace;font-size:11px">${escHtml(d.term_id || '—')}</div></div>
+          </div>`;
+        }).join('');
+
+    // Events timeline with filter
+    const eventTypes = [...new Set(allEvents.map(e => e.event_type))];
+    const filterButtons = ['all', ...EVENT_TYPES_IMPORTANT.filter(t => eventTypes.includes(t)), ...eventTypes.filter(t => !EVENT_TYPES_IMPORTANT.includes(t))]
+      .map(t => `<button class="event-filter ${t === eventFilter ? 'active' : ''}" data-type="${t}">${t}</button>`)
+      .join('');
+
+    document.getElementById('root').innerHTML = `
+      ${summaryHtml}
+
+      <div class="section">
+        <div class="section-title">Tasks</div>
+        ${taskTableHtml}
+      </div>
+
+      <div class="section">
+        <div class="section-title">Rate Limits</div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+          ${rlHtml}
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Event Timeline</div>
+        <div class="event-filters">${filterButtons}</div>
+        <div class="events-list" id="events-list">${renderEvents(allEvents)}</div>
+      </div>
+    `;
+  }
+
+  load();
+</script>
+</body>
+</html>

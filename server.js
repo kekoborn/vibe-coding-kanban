@@ -108,6 +108,7 @@ app.post('/api/tasks', (req, res) => {
   const { title, description, priority, project_path, parent_id, position } = req.body;
   if (!title) return res.status(400).json({ error: 'title is required' });
   const task = db.createTask({ title, description, priority, project_path, parent_id, position });
+  db.logEvent(task.id, 'created', { title: task.title, priority: task.priority, project_path: task.project_path });
   broadcast({ type: 'task:created', task });
   res.status(201).json(task);
 });
@@ -255,9 +256,17 @@ app.post('/api/tasks/:id/return', (req, res) => {
   // BUG-18: clear last_response before running so stale response isn't shown
   db.setLastResponse(id, '');
 
-  // Move to in_progress
+  // Move to in_progress (moveTask increments return_count automatically)
   const updated = db.moveTask({ id, column: 'in_progress' });
+  const afterMove = db.getTaskById(id);
   broadcast({ type: 'task:moved', task: updated });
+
+  // Log returned event
+  db.logEvent(id, 'returned', {
+    return_count: afterMove.return_count,
+    new_prompt_length: newPrompt.length,
+    project_path: projectPath,
+  });
 
   // BUG-02: send task:run only to the originating client
   const clientId = req.body?.clientId;
@@ -334,6 +343,12 @@ app.post('/api/tasks/:id/run', (req, res) => {
   const updated = db.moveTask({ id, column: 'in_progress' });
   broadcast({ type: 'task:moved', task: updated });
 
+  // Log started event with queue wait time
+  const queueSeconds = task.created_at
+    ? Math.round((Date.now() - new Date(task.created_at).getTime()) / 1000)
+    : null;
+  db.logEvent(id, 'started', { project_path: projectPath, queue_seconds: queueSeconds });
+
   // BUG-02: send task:run only to the originating client (not all tabs)
   const clientId = req.body?.clientId;
   const runMsg = { type: 'task:run', taskId: id, prompt: rawPrompt, autoApprove: true, cwd: projectPath };
@@ -367,10 +382,20 @@ app.post('/api/tasks/:id/complete', (req, res) => {
 
   if (task.column === 'in_progress') {
     const updated = db.moveTask({ id, column: 'review' });
-    // Re-fetch to include last_response
     const full = db.getTaskById(id);
     broadcast({ type: 'task:moved', task: full });
     broadcast({ type: 'session:completed', taskId: id });
+
+    // Log completed event (prompt-detection path)
+    const execSeconds = full.started_at
+      ? Math.round((Date.now() - new Date(full.started_at).getTime()) / 1000)
+      : null;
+    db.logEvent(id, 'completed', {
+      completion_type: 'prompt_detected',
+      response_length: (full.last_response || '').length,
+      execution_seconds: execSeconds,
+      project_path: full.project_path,
+    });
     updateCaffeinate();
   }
   res.json({ ok: true });
@@ -544,6 +569,17 @@ function completeTaskFromServer(taskId, termId) {
   broadcast({ type: 'task:moved', task: full });
   broadcast({ type: 'session:completed', taskId });
   updateCaffeinate();
+
+  // Log completed event
+  const execSeconds = full.started_at
+    ? Math.round((Date.now() - new Date(full.started_at).getTime()) / 1000)
+    : null;
+  db.logEvent(taskId, 'completed', {
+    completion_type: 'idle_timeout',
+    response_length: lastResponse.length,
+    execution_seconds: execSeconds,
+    project_path: full.project_path,
+  });
   console.log(`[Complete] Task #${taskId} moved to review (idle detection)`);
   setTimeout(triggerServerAutoQueue, 1000);
 }
@@ -631,6 +667,23 @@ function triggerServerAutoQueue() {
     setTimeout(() => runTaskOnServer(task), 500);
   }
 }
+
+// --- Analytics API ---
+
+app.get('/api/analytics/daily', (req, res) => {
+  const date = req.query.date || new Date().toISOString().slice(0, 10);
+  try {
+    res.json(db.getDailyAnalytics(date));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/analytics/events', (req, res) => {
+  const { task_id } = req.query;
+  if (!task_id) return res.status(400).json({ error: 'task_id required' });
+  res.json(db.getEventsByTask(parseInt(task_id)));
+});
 
 // --- WebSocket ---
 
@@ -742,6 +795,7 @@ wss.on('connection', (ws) => {
               if (count % COMPACT_EVERY_N_TASKS === 0) {
                 console.log(`[Compact] ${termId}: sending /compact after ${count} tasks`);
                 p.write('/compact\r');
+                db.logEvent(msg.taskId, 'compact', { term_id: termId, task_count: count });
                 setTimeout(() => {
                   console.log(`[Compact] ${termId}: compact done, typing prompt`);
                   p.write(text + '\r');
@@ -993,6 +1047,13 @@ function spawnShell(ws, termId, opts = {}) {
         // Block new task starts for this terminal globally
         rateLimitedTerms.add(termId);
 
+        db.logEvent(currentTaskId, 'rate_limited', {
+          term_id: termId,
+          reset_time: new Date(resetTime).toISOString(),
+          continue_at: new Date(continueAt).toISOString(),
+          wait_minutes: Math.round((continueAt - Date.now()) / 60000),
+        });
+
         broadcast({
           type: 'ratelimit:detected',
           taskId: currentTaskId,
@@ -1011,6 +1072,11 @@ function spawnShell(ws, termId, opts = {}) {
 
           // Unblock this terminal for new tasks
           rateLimitedTerms.delete(termId);
+
+          db.logEvent(currentTaskId, 'rate_limit_resolved', {
+            term_id: termId,
+            waited_ms: Math.max(delayMs, 1000),
+          });
 
           // Send continue prompt to Claude Code
           try { p.write('continue\r'); } catch {}
@@ -1037,6 +1103,7 @@ function spawnShell(ws, termId, opts = {}) {
         try { p.write('\r'); } catch {}
         ptyState.outputBuffer = '';
         ptyState.lastDataTime = Date.now();
+        db.logEvent(currentTaskId, 'auto_approved', { source: 'poll', term_id: termId });
         return;
       }
 
@@ -1191,6 +1258,7 @@ function spawnShell(ws, termId, opts = {}) {
     if (entry?.taskId) {
       if (exitCode !== 0) {
         broadcast({ type: 'session:error', taskId: entry.taskId, error: `Process exited with code ${exitCode}` });
+        db.logEvent(entry.taskId, 'process_exit', { exit_code: exitCode, term_id: termId });
       }
       completeTaskFromServer(entry.taskId, termId);
     }
@@ -1371,7 +1439,10 @@ function parseResetTime(timeStr) {
 (function cleanupStuckTasks() {
   const stuck = db.getTasksByColumn('in_progress');
   if (stuck.length > 0) {
-    stuck.forEach(task => db.moveTask({ id: task.id, column: 'backlog' }));
+    stuck.forEach(task => {
+      db.moveTask({ id: task.id, column: 'backlog' });
+      db.logEvent(task.id, 'stuck_reset', { title: task.title, project_path: task.project_path });
+    });
     console.log(`[Startup] Moved ${stuck.length} stuck in_progress task(s) back to backlog`);
   }
 })();
