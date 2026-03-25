@@ -39,11 +39,13 @@ function installKanbanLeadSkill() {
   try {
     if (!fs.existsSync(skillSrc)) { console.log('[Skill] source not found, skip'); return; }
     if (!fs.existsSync(commandsDir)) fs.mkdirSync(commandsDir, { recursive: true });
-    if (!fs.existsSync(skillDst)) {
-      fs.copyFileSync(skillSrc, skillDst);
-      console.log('[Skill] kanban-lead installed to ' + skillDst);
+    const srcContent = fs.readFileSync(skillSrc, 'utf8');
+    const dstContent = fs.existsSync(skillDst) ? fs.readFileSync(skillDst, 'utf8') : null;
+    if (srcContent !== dstContent) {
+      fs.writeFileSync(skillDst, srcContent, 'utf8');
+      console.log('[Skill] kanban-lead synced to ' + skillDst);
     } else {
-      console.log('[Skill] kanban-lead already installed');
+      console.log('[Skill] kanban-lead up to date');
     }
   } catch (err) { console.error('[Skill] install failed:', err.message); }
 }

@@ -34,20 +34,26 @@ If there's a CLAUDE.md, README.md, or package.json — read those first.
 
 ### Step 3: Decompose into Tasks
 
-Break the work into **5-12 sequential tasks**. Err on the side of more, smaller tasks.
+Break the work into **3-8 sequential tasks**. Err on the side of COMBINING related changes, not splitting them.
 
 Each task must pass all three checks:
 
 **✓ One operation** — a single logical action: add a function, update a schema, wire up a route, write a test. Not "implement feature X" but "add X handler in Y file".
 
-**✓ Max 2-3 files** — if a task touches more than 3 files, split it. More files = more chances for Claude to lose focus mid-task.
+**✓ Cohesive scope** — split only when there is a real dependency between layers (e.g. DB schema must exist before API code). Don't split UI tweaks across multiple tasks just because they are in different files.
 
 **✓ ~5-15 minutes of work** — if you'd estimate the task at >15 minutes for a human, split it further. Long tasks accumulate context and are harder to retry.
 
-**When to split further:**
-- "implement X" → split into: data model / API handler / UI component / tests
-- "refactor X" → split into: extract function / update callers / update types / cleanup
-- "fix bug in X" → split into: add failing test / fix the code / verify edge cases
+**When to combine into one task:**
+- All changes are in the same file — always one task
+- Related UI tweaks (colors, sizes, labels) across 2-3 files — one task
+- Model + API handler when they have no dependents — one task
+- Any set of changes a human would describe as "just one thing"
+
+**When to split:**
+- DB schema change that other tasks depend on (must run first)
+- Backend API that frontend task will call (must exist before UI task)
+- A task that would touch 5+ files with unrelated concerns
 
 **Task description format** — write as a direct instruction to Claude Code:
 ```
@@ -114,3 +120,5 @@ After creating tasks, tell the user:
 - Use position field to ensure correct execution order
 - Each task description should mention which files to modify when possible
 - Include "don't" instructions when there's risk of unwanted changes (e.g., "Don't modify the database schema")
+- Never create standalone "build + git push" tasks. Include build verification inside the last code task's description: add "After changes, run `npm run build && git add -A && git commit -m '...' && git push`" at the end of that task's description.
+- Avoid creating a task if the work is clearly already done (e.g. the feature was part of a previous task in the same batch). Check task descriptions before creating.
