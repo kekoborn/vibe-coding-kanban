@@ -666,6 +666,19 @@ main {
   word-break: break-word;
 }
 
+.task-noop-badge {
+  display: inline-block;
+  margin-left: 6px;
+  background: #f59e0b;
+  color: #000;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-weight: 600;
+  vertical-align: middle;
+  line-height: 1.4;
+}
+
 .task-card-desc {
   font-size: 11px;
   color: var(--text-muted);

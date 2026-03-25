@@ -524,11 +524,25 @@ function renderTaskCard(task, column) {
     ? `<div class="task-card-response-wrapper collapsed" onclick="event.stopPropagation(); this.classList.toggle('collapsed')"><div class="response-label">Claude Response ▾</div><div class="task-card-response">${escapeHtml(task.last_response).replace(/\n/g, '<br>')}</div></div>`
     : '';
 
+  const NO_OP_PHRASES = [
+    'already done', 'Already done',
+    'уже сделан', 'уже реализован',
+    'nothing to do',
+    'ничего не делать', 'Ничего делать не нужно',
+    'рабочее дерево чистое',
+    'нечего добавлять',
+  ];
+  const isNoOp = column === 'done' && task.last_response
+    && NO_OP_PHRASES.some(p => task.last_response.includes(p));
+  const noOpBadge = isNoOp
+    ? `<span class="task-noop-badge" title="Task was already done — no changes were made">no-op</span>`
+    : '';
+
   return `
     <div class="task-card" data-id="${task.id}" data-priority="${priority}"${statusAttr} onclick="openEditModal(${task.id})">
       ${statusBadge}
       ${priorityBadge}
-      <div class="task-card-title">${escapeHtml(task.title)}</div>
+      <div class="task-card-title">${escapeHtml(task.title)}${noOpBadge}</div>
       ${descHtml}
       ${lastResponseHtml}
       ${projectTag}
