@@ -595,6 +595,24 @@ main {
   color: var(--success);
 }
 
+.approve-all-btn {
+  background: transparent;
+  border: 1px solid var(--text-muted);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  line-height: 1.4;
+  transition: color 0.15s, border-color 0.15s;
+  margin-left: auto;
+}
+
+.approve-all-btn:hover {
+  color: #22c55e;
+  border-color: #22c55e;
+}
+
 .column-collapse-btn {
   background: transparent;
   border: none;
@@ -604,7 +622,6 @@ main {
   padding: 0 4px;
   line-height: 1;
   transition: color 0.15s;
-  margin-left: auto;
 }
 
 .column-collapse-btn:hover {

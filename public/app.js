@@ -411,6 +411,11 @@ function renderBoard() {
 
     count.textContent = colTasks.length;
 
+    if (col === 'review') {
+      const approveBtn = document.getElementById('approve-all-btn');
+      if (approveBtn) approveBtn.style.display = colTasks.length ? '' : 'none';
+    }
+
     // Priority stats
     const statsEl = document.querySelector(`.priority-stats[data-column="${col}"]`);
     if (statsEl) {
@@ -982,6 +987,22 @@ async function _flushPendingAttachments(taskId) {
     }
   }
   _attachPending = [];
+}
+
+// --- Approve all review tasks ---
+async function approveAllReview() {
+  const reviewTasks = tasks.filter(t => t.column === 'review');
+  if (!reviewTasks.length) return;
+  if (!confirm('Переместить все задачи из review в done?')) return;
+  await Promise.all(reviewTasks.map(t =>
+    fetch(`/api/tasks/${t.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ column: 'done' })
+    })
+  ));
+  await loadTasks();
+  renderBoard();
 }
 
 // --- Return task (from review back to run) ---
