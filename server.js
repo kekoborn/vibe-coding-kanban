@@ -982,7 +982,7 @@ function spawnShell(ws, termId, opts = {}) {
     if (prev?.idleTimer) clearTimeout(prev.idleTimer);
     const initTask = db.getTaskById(opts.taskId);
     const initCheckpoint = getJsonlCheckpoint(initTask?.project_path || opts.cwd || '');
-    termTaskMap.set(termId, { taskId: opts.taskId, idleTimer: null, lastDataTime: Date.now(), jsonlCheckpoint: initCheckpoint });
+    termTaskMap.set(termId, { taskId: opts.taskId, idleTimer: null, lastDataTime: Date.now(), jsonlCheckpoint: initCheckpoint, startedAt: Date.now() });
     console.log(`[Task] Registered termId=${termId} -> taskId=${opts.taskId}, checkpoint line=${initCheckpoint?.lineOffset ?? 'none'}`);
 
     // Poll every 3 seconds — handles auto-approve, rate-limit, and idle completion
@@ -1255,14 +1255,21 @@ function spawnShell(ws, termId, opts = {}) {
     if (promptApproveTimer) { clearTimeout(promptApproveTimer); promptApproveTimer = null; }
     // Unblock rate limit tracking for this terminal
     rateLimitedTerms.delete(termId);
-    // If task was still mapped (not stopped), complete it
+    // If task was still mapped (not stopped), complete or revert it
     const entry = termTaskMap.get(termId);
     if (entry?.taskId) {
-      if (exitCode !== 0) {
-        broadcast({ type: 'session:error', taskId: entry.taskId, error: `Process exited with code ${exitCode}` });
-        db.logEvent(entry.taskId, 'process_exit', { exit_code: exitCode, term_id: termId });
+      const runMs = entry.startedAt ? (Date.now() - entry.startedAt) : 99999;
+      const isCrash = exitCode !== 0 || runMs < 15000;
+      if (isCrash) {
+        console.log(`[PTY] crash detected: termId=${termId}, exitCode=${exitCode}, runMs=${runMs}`);
+        db.logEvent(entry.taskId, 'process_crash', { exit_code: exitCode, run_ms: runMs });
+        broadcast({ type: 'session:error', taskId: entry.taskId, error: `Process crashed (exit ${exitCode}, ran ${runMs}ms)` });
+        db.moveTask({ id: entry.taskId, column: 'backlog' });
+        broadcast({ type: 'task:moved', taskId: entry.taskId, column: 'backlog' });
+        // Do NOT call completeTaskFromServer — no autoqueue
+      } else {
+        completeTaskFromServer(entry.taskId, termId);
       }
-      completeTaskFromServer(entry.taskId, termId);
     }
     // Full cleanup on exit — PTY is gone, no more continue possible
     termTaskMap.delete(termId);
