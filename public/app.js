@@ -217,6 +217,10 @@ function handleWSMessage(msg) {
     case 'session:started':
       sessionStatuses[msg.taskId] = { status: 'running' };
       renderBoard();
+      // Switch to the correct terminal tab (server handled PTY directly, no task:run was sent)
+      if (msg.cwd && window.terminalManager) {
+        window.terminalManager._switchToProject(msg.cwd);
+      }
       break;
 
     case 'session:status':

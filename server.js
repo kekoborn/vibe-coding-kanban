@@ -633,8 +633,9 @@ function runTaskOnServer(task) {
       setTimeout(() => p._sendPendingNow?.(), TASK_START_DELAY + 5000);
     }
 
-    // Notify any connected tabs so they can show the terminal
-    broadcast({ type: 'task:run', taskId: task.id, prompt: rawPrompt, autoApprove: true, cwd: projectPath });
+    // Notify UI to switch to the correct terminal tab (do NOT send task:run — that would
+    // trigger runInTaskTerminal on the client and cause a double terminal:continue / double prompt)
+    broadcast({ type: 'session:started', taskId: task.id, cwd: projectPath });
   } else if (clients.size === 0) {
     // Headless mode — no browser connected, spawn PTY directly on server
     console.log(`[ServerAutoQueue] Headless spawn for task #${task.id}`);
@@ -1174,6 +1175,16 @@ function spawnShell(ws, termId, opts = {}) {
     // Detect Claude ready (❯ prompt) and type the pending prompt
     if (waitingForClaude && pendingPrompt) {
       const clean = stripAnsi(data);
+      // Auto-approve permission prompts even while waiting for Claude to start —
+      // they can appear before ❯ (e.g. "trust this folder" on first run)
+      if (opts.autoApprove && autoApproveEnabled) {
+        const cleanCheck = clean;
+        const nospaceCheck = clean.replace(/\s+/g, '').toLowerCase();
+        if (hasPrompt(cleanCheck, nospaceCheck)) {
+          console.log(`[AutoApprove] ${termId}: permission prompt during waitingForClaude, sending Enter`);
+          try { p.write('\r'); } catch {}
+        }
+      }
       if (clean.includes('❯')) {
         const toSend = pendingPrompt;
         pendingPrompt = null;
@@ -1191,7 +1202,7 @@ function spawnShell(ws, termId, opts = {}) {
           termOutputBuffers.delete(termId);
         }, 300);
       }
-      // While waiting for Claude to start, skip all detection
+      // While waiting for Claude to start, skip all other detection
       return;
     }
     // Still waiting for prompt to be sent (in the 300ms setTimeout)
