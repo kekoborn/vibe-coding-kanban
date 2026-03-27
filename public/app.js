@@ -704,38 +704,90 @@ function initModal() {
 
     if (!title) return;
 
-    if (editId) {
-      // BUG-14: only allow priority change for running tasks
-      const editTask = tasks.find(t => t.id === parseInt(editId));
-      const editStatus = sessionStatuses[editTask?.id];
-      const editRunning = editStatus?.status === 'running' || editStatus?.status === 'waiting_reset';
-      const updatePayload = editRunning
-        ? { priority }
-        : { title, description, priority, project_path };
-      await updateTaskApi(parseInt(editId), updatePayload);
-      await _flushPendingAttachments(parseInt(editId));
-    } else {
-      const res = await fetch('/api/tasks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, description, priority, project_path }),
-      });
-      const newTask = await res.json();
-      if (newTask?.id && _attachPending.length > 0) {
-        await _flushPendingAttachments(newTask.id);
+    // Check if project path exists before saving
+    if (project_path) {
+      const check = await fetch(`/api/check-path?path=${encodeURIComponent(project_path)}`).then(r => r.json()).catch(() => null);
+      if (check && !check.exists) {
+        // Show path warning popup; store pending form data for resolution
+        _pendingTaskSave = { editId, title, description, priority, project_path };
+        openPathWarning(project_path);
+        return;
       }
     }
-    closeModal();
-  });
 
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      if (!overlay.classList.contains('hidden')) closeModal();
-      const returnPopup = document.getElementById('return-popup');
-      if (returnPopup && !returnPopup.classList.contains('hidden')) closeReturnModal();
-    }
+    await _doSaveTask({ editId, title, description, priority, project_path });
   });
 }
+
+let _pendingTaskSave = null;
+
+function openPathWarning(badPath) {
+  const overlay = document.getElementById('path-warning-overlay');
+  const msg = document.getElementById('path-warning-msg');
+  const input = document.getElementById('path-warning-input');
+  msg.textContent = `The folder "${badPath}" does not exist on this machine. Claude won't be able to start the task.`;
+  input.value = badPath;
+  overlay.classList.remove('hidden');
+  setTimeout(() => input.focus(), 50);
+}
+
+function closePathWarning() {
+  document.getElementById('path-warning-overlay').classList.add('hidden');
+  _pendingTaskSave = null;
+}
+
+async function pathWarningIgnore() {
+  // Save with the original bad path
+  document.getElementById('path-warning-overlay').classList.add('hidden');
+  if (_pendingTaskSave) {
+    await _doSaveTask(_pendingTaskSave);
+    _pendingTaskSave = null;
+  }
+}
+
+async function pathWarningFix() {
+  const newPath = document.getElementById('path-warning-input').value.trim();
+  document.getElementById('path-warning-overlay').classList.add('hidden');
+  if (_pendingTaskSave) {
+    await _doSaveTask({ ..._pendingTaskSave, project_path: newPath });
+    _pendingTaskSave = null;
+  }
+}
+
+async function _doSaveTask({ editId, title, description, priority, project_path }) {
+  if (editId) {
+    const editTask = tasks.find(t => t.id === parseInt(editId));
+    const editStatus = sessionStatuses[editTask?.id];
+    const editRunning = editStatus?.status === 'running' || editStatus?.status === 'waiting_reset';
+    const updatePayload = editRunning
+      ? { priority }
+      : { title, description, priority, project_path };
+    await updateTaskApi(parseInt(editId), updatePayload);
+    await _flushPendingAttachments(parseInt(editId));
+  } else {
+    const res = await fetch('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, description, priority, project_path }),
+    });
+    const newTask = await res.json();
+    if (newTask?.id && _attachPending.length > 0) {
+      await _flushPendingAttachments(newTask.id);
+    }
+  }
+  closeModal();
+}
+
+// Global Escape key handler (registered once at init)
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const modalOverlay = document.getElementById('modal-overlay');
+  if (modalOverlay && !modalOverlay.classList.contains('hidden')) { closeModal(); return; }
+  const returnPopup = document.getElementById('return-popup');
+  if (returnPopup && !returnPopup.classList.contains('hidden')) { closeReturnModal(); return; }
+  const pathWarning = document.getElementById('path-warning-overlay');
+  if (pathWarning && !pathWarning.classList.contains('hidden')) { closePathWarning(); return; }
+});
 
 function updateProjectPathDatalist() {
   const datalist = document.getElementById('project-path-list');
@@ -1694,4 +1746,54 @@ function submitKanbanLead() {
   // Clear prompt (keep project for next use)
   document.getElementById('kl-prompt').value = '';
   addLog('[KanbanLead] Sent command to helper terminal for project: ' + (project || 'unspecified'), 'client');
+}
+
+// --- KL folder picker ---
+function openKLProjectPicker() {
+  const picker = document.getElementById('kl-project-picker');
+  const input = document.getElementById('kl-project');
+  if (!picker.classList.contains('hidden')) {
+    picker.classList.add('hidden');
+    return;
+  }
+  const projects = [...new Set(tasks.map(t => t.project_path).filter(Boolean))].sort();
+  if (projects.length === 0) {
+    picker.classList.add('hidden');
+    return;
+  }
+  picker.innerHTML = projects.map(p =>
+    `<div class="kl-picker-item" onclick="selectKLProject(${JSON.stringify(escapeAttr(p))})">${escapeHtml(p)}</div>`
+  ).join('');
+  picker.classList.remove('hidden');
+
+  // Close when clicking outside
+  const closeOnOutside = (e) => {
+    if (!picker.contains(e.target) && e.target.id !== 'kl-folder-btn') {
+      picker.classList.add('hidden');
+      document.removeEventListener('click', closeOnOutside);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', closeOnOutside), 0);
+}
+
+function selectKLProject(path) {
+  document.getElementById('kl-project').value = path;
+  document.getElementById('kl-project-picker').classList.add('hidden');
+}
+
+// --- Helper terminal auto-approve ---
+let helperAutoApproveEnabled = false;
+
+function toggleHelperAutoApprove() {
+  helperAutoApproveEnabled = !helperAutoApproveEnabled;
+  const btn = document.getElementById('helper-autoapprove-btn');
+  if (btn) {
+    btn.textContent = `Auto-approve: ${helperAutoApproveEnabled ? 'ON' : 'OFF'}`;
+    btn.classList.toggle('active', helperAutoApproveEnabled);
+  }
+  // Tell server to enable auto-approve polling for the helper terminal
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'terminal:set-autoapprove', termId: 'helper', enabled: helperAutoApproveEnabled }));
+  }
+  addLog(`[Helper] Auto-approve ${helperAutoApproveEnabled ? 'ON' : 'OFF'}`, 'client');
 }

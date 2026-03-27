@@ -127,7 +127,11 @@
           </div>
           <div class="kl-body" id="kl-body">
             <p class="kl-description">Describe what needs to be done — Kanban Lead will break it into steps and add cards to the backlog.</p>
-            <input type="text" id="kl-project" class="kl-input" placeholder="/path/to/project" list="project-path-list" autocomplete="off">
+            <div class="kl-path-row">
+              <input type="text" id="kl-project" class="kl-input" placeholder="/path/to/project" list="project-path-list" autocomplete="off">
+              <button class="kl-folder-btn" id="kl-folder-btn" onclick="openKLProjectPicker()" title="Choose from known projects">📁</button>
+            </div>
+            <div class="kl-project-picker hidden" id="kl-project-picker"></div>
             <textarea id="kl-prompt" class="kl-textarea" rows="3" placeholder="What needs to be done? Describe the tasks to create..."></textarea>
             <div class="kl-actions">
               <button class="btn btn-primary kl-submit" id="kl-submit" onclick="submitKanbanLead()">Add tasks</button>
@@ -138,6 +142,7 @@
           <div class="term-header">
             <span class="term-title">Claude Code — Helper</span>
             <span class="term-hint">Helps plan and create tasks</span>
+            <button class="btn btn-sm helper-autoapprove-btn" id="helper-autoapprove-btn" onclick="toggleHelperAutoApprove()" title="Auto-approve permission prompts in this terminal">Auto-approve: OFF</button>
           </div>
           <div id="helper-container" class="term-container"></div>
         </div>
@@ -243,6 +248,25 @@
     <div class="return-popup-actions">
       <button type="button" class="btn btn-sm" onclick="closeReturnModal()">Cancel</button>
       <button type="button" class="btn btn-sm btn-primary" onclick="submitReturn()">↩ Re-run</button>
+    </div>
+  </div>
+
+  <!-- Path not found warning popup -->
+  <div id="path-warning-overlay" class="hidden" onclick="if(event.target===this)closePathWarning()">
+    <div id="path-warning-popup">
+      <div class="path-warning-header">
+        <span class="path-warning-title">⚠ Folder not found</span>
+        <button class="path-warning-close" onclick="closePathWarning()">&times;</button>
+      </div>
+      <div class="path-warning-body">
+        <p id="path-warning-msg"></p>
+        <label class="path-warning-label">Change path</label>
+        <input type="text" id="path-warning-input" class="path-warning-input" autocomplete="off" list="project-path-list">
+      </div>
+      <div class="path-warning-actions">
+        <button type="button" class="btn btn-sm" onclick="pathWarningIgnore()">Save anyway</button>
+        <button type="button" class="btn btn-sm btn-primary" onclick="pathWarningFix()">Use new path</button>
+      </div>
     </div>
   </div>
 

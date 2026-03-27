@@ -61,9 +61,9 @@ const IDLE_COMPLETE_DELAY = 45000; // 45 seconds of no output = task completed (
 const PROMPT_COMPLETE_DELAY = 7000; // 7 seconds after Claude prompt detected = completed
 const TASK_START_DELAY = 4000; // delay before sending next task prompt (let Claude settle)
 const MAX_CONCURRENT_TASKS = 5; // max tasks running simultaneously (0 = unlimited)
-let autoApproveEnabled = false; // toggled from client
-let autoQueueEnabled = false; // BUG-05: server-side auto-queue state (synced across tabs)
-let maxTerminals = 0; // 0 = unlimited; persisted server-side so queue logic works without a tab
+let autoApproveEnabled = db.getSetting('autoApproveEnabled', 'false') === 'true';
+let autoQueueEnabled = db.getSetting('autoQueueEnabled', 'false') === 'true';
+let maxTerminals = parseInt(db.getSetting('maxTerminals', '0')) || 0;
 
 // Rate-limited terminals — termIds currently blocked by API rate limit
 const rateLimitedTerms = new Set();
@@ -167,6 +167,7 @@ app.delete('/api/tasks/:id', (req, res) => {
 // Auto-approve toggle
 app.post('/api/auto-approve', (req, res) => {
   autoApproveEnabled = !!req.body.enabled;
+  db.setSetting('autoApproveEnabled', autoApproveEnabled);
   console.log(`[AutoApprove] ${autoApproveEnabled ? 'ENABLED' : 'DISABLED'}`);
   broadcast({ type: 'settings:autoApprove', enabled: autoApproveEnabled });
   res.json({ ok: true, enabled: autoApproveEnabled });
@@ -176,9 +177,10 @@ app.get('/api/auto-approve', (req, res) => {
   res.json({ enabled: autoApproveEnabled });
 });
 
-// BUG-05: Auto-queue server-side state
+// Auto-queue server-side state
 app.post('/api/auto-queue', (req, res) => {
   autoQueueEnabled = !!req.body.enabled;
+  db.setSetting('autoQueueEnabled', autoQueueEnabled);
   console.log(`[AutoQueue] ${autoQueueEnabled ? 'ENABLED' : 'DISABLED'}`);
   broadcast({ type: 'settings:autoQueue', enabled: autoQueueEnabled });
   res.json({ ok: true, enabled: autoQueueEnabled });
@@ -195,6 +197,7 @@ app.get('/api/max-terminals', (req, res) => {
 app.post('/api/max-terminals', (req, res) => {
   const value = Math.max(0, parseInt(req.body.value) || 0);
   maxTerminals = value;
+  db.setSetting('maxTerminals', maxTerminals);
   console.log(`[MaxTerminals] Set to ${maxTerminals === 0 ? 'unlimited' : maxTerminals}`);
   broadcast({ type: 'settings:maxTerminals', value: maxTerminals });
   res.json({ ok: true, maxTerminals });
@@ -203,6 +206,17 @@ app.post('/api/max-terminals', (req, res) => {
 app.get('/api/skill-status', (req, res) => {
   const dst = path.join(process.env.HOME, '.claude', 'commands', 'kanban-lead.md');
   res.json({ installed: fs.existsSync(dst) });
+});
+
+app.get('/api/check-path', (req, res) => {
+  const p = (req.query.path || '').trim();
+  if (!p) return res.json({ exists: false, isDir: false });
+  try {
+    const stat = fs.statSync(p);
+    res.json({ exists: true, isDir: stat.isDirectory() });
+  } catch {
+    res.json({ exists: false, isDir: false });
+  }
 });
 
 // Temporary file upload for re-run context (not saved to task attachments)
@@ -734,6 +748,15 @@ wss.on('connection', (ws) => {
         spawnShell(ws, termId, msg);
         break;
 
+      case 'terminal:set-autoapprove': {
+        const entry = globalPtys.get(termId);
+        if (entry && entry.meta) {
+          entry.meta.autoApprove = !!msg.enabled;
+          console.log(`[AutoApprove] terminal ${termId} per-terminal: ${entry.meta.autoApprove}`);
+        }
+        break;
+      }
+
       case 'terminal:input': {
         const entry = globalPtys.get(termId);
         if (entry) entry.pty.write(msg.data);
@@ -977,6 +1000,26 @@ function spawnShell(ws, termId, opts = {}) {
   let rateLimitDetected = false; // sticky flag — set in onData, not lost when buffer rotates
   let rateLimitFirstDetectedAt = null; // when rate limit was first seen — used to wait for full message
   let promptApproveTimer = null; // debounce for auto-approve in onData
+
+  // Lightweight auto-approve poll for manual/helper terminals (no taskId)
+  // Fires when: global autoApproveEnabled OR this terminal's per-terminal meta.autoApprove is set
+  if (!opts.taskId) {
+    const gEntryRef = globalPtys.get(termId);
+    const manualApproveInterval = setInterval(() => {
+      const perTerminal = gEntryRef?.meta?.autoApprove;
+      if (!autoApproveEnabled && !perTerminal) return;
+      const clean = stripAnsi(ptyState.outputBuffer.slice(-2000));
+      const norm = clean.replace(/\r/g, '');
+      const nospace = norm.replace(/\s+/g, '').toLowerCase();
+      if (hasPrompt(norm.slice(-300), nospace.slice(-300))) {
+        console.log(`[AutoApprove] ${termId}: prompt detected in manual/helper terminal, sending Enter`);
+        try { p.write('\r'); } catch {}
+        ptyState.outputBuffer = '';
+        ptyState.lastDataTime = Date.now();
+      }
+    }, 3000);
+    p.onExit(() => clearInterval(manualApproveInterval));
+  }
 
   if (opts.autoApprove && opts.taskId) {
     const prev = termTaskMap.get(termId);
@@ -1457,6 +1500,13 @@ function parseResetTime(timeStr) {
       db.logEvent(task.id, 'stuck_reset', { title: task.title, project_path: task.project_path });
     });
     console.log(`[Startup] Moved ${stuck.length} stuck in_progress task(s) back to backlog`);
+    // If auto-queue was on before crash, resume it after clients connect
+    if (autoQueueEnabled) {
+      setTimeout(() => {
+        console.log('[Startup] Auto-queue was ON before restart — triggering server auto-queue');
+        triggerServerAutoQueue();
+      }, 5000);
+    }
   }
 })();
 

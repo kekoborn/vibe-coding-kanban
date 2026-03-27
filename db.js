@@ -75,6 +75,26 @@ db.exec(`
 db.exec(`CREATE INDEX IF NOT EXISTS idx_events_date ON task_events (date(timestamp))`);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_events_task ON task_events (task_id)`);
 
+// Settings table — persists server state across restarts
+db.exec(`
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  )
+`);
+
+const _getSetting = db.prepare(`SELECT value FROM settings WHERE key = ?`);
+const _setSetting = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
+
+function getSetting(key, defaultValue = null) {
+  const row = _getSetting.get(key);
+  return row ? row.value : defaultValue;
+}
+
+function setSetting(key, value) {
+  _setSetting.run(key, String(value));
+}
+
 const getAllTasks = db.prepare(`
   SELECT * FROM tasks ORDER BY "column",
     CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 WHEN 'hold' THEN 3 END,
@@ -327,4 +347,7 @@ module.exports = {
       SELECT * FROM task_events WHERE task_id = ? ORDER BY timestamp
     `).all(taskId);
   },
+
+  getSetting,
+  setSetting,
 };
