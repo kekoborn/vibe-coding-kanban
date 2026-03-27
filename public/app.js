@@ -4,6 +4,7 @@ let sessionStatuses = {}; // taskId -> { status, resetTime }
 let ws = null;
 let autoQueueEnabled = false;
 let autoApproveEnabled = false;
+let _wsConnectedOnce = false;
 let maxTerminals = parseInt(localStorage.getItem('maxTerminals') || '0'); // 0 = unlimited
 
 // BUG-02: unique ID for this browser tab — sent in run requests so server
@@ -135,10 +136,12 @@ function connectWS() {
     addLog('WebSocket connected', 'ws');
     // BUG-02: register this tab's clientId with the server
     ws.send(JSON.stringify({ type: 'client:register', clientId: CLIENT_ID }));
-    // BUG-12: re-sync auto-approve state on every reconnect (server may have restarted)
-    fetchAutoApprove();
-    // BUG-06: re-sync auto-queue state on every reconnect
-    fetchAutoQueue();
+    if (_wsConnectedOnce) {
+      // Reconnect: sync actual server state without resetting to OFF
+      syncAutoApprove();
+      syncAutoQueue();
+    }
+    _wsConnectedOnce = true;
     fetchMaxTerminals();
     // Re-attach terminal manager listeners on every (re)connect
     if (window.terminalManager) {
@@ -1287,6 +1290,26 @@ async function fetchAutoApprove() {
   } catch {}
 }
 
+async function syncAutoApprove() {
+  // Sync current server state without resetting (used on WS reconnect)
+  try {
+    const res = await fetch('/api/auto-approve');
+    const data = await res.json();
+    autoApproveEnabled = data.enabled;
+    updateAutoApproveBtn();
+  } catch {}
+}
+
+async function syncAutoQueue() {
+  // Sync current server state without resetting (used on WS reconnect)
+  try {
+    const res = await fetch('/api/auto-queue');
+    const data = await res.json();
+    autoQueueEnabled = data.enabled;
+    updateStartBtn();
+  } catch {}
+}
+
 async function fetchMaxTerminals() {
   try {
     const res = await fetch('/api/max-terminals');
@@ -1749,36 +1772,17 @@ function submitKanbanLead() {
 }
 
 // --- KL folder picker ---
-function openKLProjectPicker() {
-  const picker = document.getElementById('kl-project-picker');
-  const input = document.getElementById('kl-project');
-  if (!picker.classList.contains('hidden')) {
-    picker.classList.add('hidden');
-    return;
-  }
-  const projects = [...new Set(tasks.map(t => t.project_path).filter(Boolean))].sort();
-  if (projects.length === 0) {
-    picker.classList.add('hidden');
-    return;
-  }
-  picker.innerHTML = projects.map(p =>
-    `<div class="kl-picker-item" onclick="selectKLProject(${JSON.stringify(escapeAttr(p))})">${escapeHtml(p)}</div>`
-  ).join('');
-  picker.classList.remove('hidden');
-
-  // Close when clicking outside
-  const closeOnOutside = (e) => {
-    if (!picker.contains(e.target) && e.target.id !== 'kl-folder-btn') {
-      picker.classList.add('hidden');
-      document.removeEventListener('click', closeOnOutside);
+async function openKLProjectPicker() {
+  const btn = document.getElementById('kl-folder-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch('/api/pick-folder');
+    const data = await res.json();
+    if (data.path) {
+      document.getElementById('kl-project').value = data.path;
     }
-  };
-  setTimeout(() => document.addEventListener('click', closeOnOutside), 0);
-}
-
-function selectKLProject(path) {
-  document.getElementById('kl-project').value = path;
-  document.getElementById('kl-project-picker').classList.add('hidden');
+  } catch {}
+  if (btn) btn.disabled = false;
 }
 
 // --- Helper terminal auto-approve ---

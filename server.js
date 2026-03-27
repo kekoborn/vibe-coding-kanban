@@ -208,6 +208,14 @@ app.get('/api/skill-status', (req, res) => {
   res.json({ installed: fs.existsSync(dst) });
 });
 
+app.get('/api/pick-folder', (req, res) => {
+  const { exec } = require('child_process');
+  exec(`osascript -e 'POSIX path of (choose folder with prompt "Choose project folder:")'`, (err, stdout) => {
+    if (err) return res.json({ path: null });
+    res.json({ path: stdout.trim().replace(/\/$/, '') });
+  });
+});
+
 app.get('/api/check-path', (req, res) => {
   const p = (req.query.path || '').trim();
   if (!p) return res.json({ exists: false, isDir: false });
@@ -1001,6 +1009,22 @@ function spawnShell(ws, termId, opts = {}) {
   let rateLimitFirstDetectedAt = null; // when rate limit was first seen — used to wait for full message
   let promptApproveTimer = null; // debounce for auto-approve in onData
 
+  function hasPrompt(text, nospaceText) {
+    // BUG-10: "1.yes + no" pattern requires "Esc to cancel" to distinguish
+    // Claude Code system prompts from Claude's own questions (which may contain
+    // "1. Yes" / "2. No" as answer options)
+    const isSystemPromptPattern = nospaceText.includes('1.yes') && nospaceText.includes('no') && nospaceText.includes('esctocancel');
+    return (
+      text.includes('Do you want to') || nospaceText.includes('doyouwantto') ||
+      text.includes('Run command') || nospaceText.includes('runcommand') ||
+      text.includes('trust this folder') || nospaceText.includes('trustthisfolder') ||
+      /\(y\/n\)/i.test(text) ||
+      text.includes('Enter to confirm') || nospaceText.includes('entertoconfirm') ||
+      nospaceText.includes('esctocancel') ||
+      isSystemPromptPattern
+    );
+  }
+
   // Lightweight auto-approve poll for manual/helper terminals (no taskId)
   // Fires when: global autoApproveEnabled OR this terminal's per-terminal meta.autoApprove is set
   if (!opts.taskId) {
@@ -1034,22 +1058,6 @@ function spawnShell(ws, termId, opts = {}) {
     function getCurrentTaskId() {
       const entry = termTaskMap.get(termId);
       return entry?.taskId || null;
-    }
-
-    function hasPrompt(text, nospaceText) {
-      // BUG-10: "1.yes + no" pattern requires "Esc to cancel" to distinguish
-      // Claude Code system prompts from Claude's own questions (which may contain
-      // "1. Yes" / "2. No" as answer options)
-      const isSystemPromptPattern = nospaceText.includes('1.yes') && nospaceText.includes('no') && nospaceText.includes('esctocancel');
-      return (
-        text.includes('Do you want to') || nospaceText.includes('doyouwantto') ||
-        text.includes('Run command') || nospaceText.includes('runcommand') ||
-        text.includes('trust this folder') || nospaceText.includes('trustthisfolder') ||
-        /\(y\/n\)/i.test(text) ||
-        text.includes('Enter to confirm') || nospaceText.includes('entertoconfirm') ||
-        nospaceText.includes('esctocancel') ||
-        isSystemPromptPattern
-      );
     }
 
     pollInterval = setInterval(() => {
