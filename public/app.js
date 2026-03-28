@@ -1276,6 +1276,27 @@ function updateAutoApproveBtn() {
   }
 }
 
+// --- Response Language ---
+
+async function fetchResponseLanguage() {
+  try {
+    const res = await fetch('/api/response-language');
+    const data = await res.json();
+    const sel = document.getElementById('response-language-select');
+    if (sel) sel.value = data.language || '';
+  } catch {}
+}
+
+async function setResponseLanguage(value) {
+  try {
+    await fetch('/api/response-language', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ language: value }),
+    });
+  } catch {}
+}
+
 async function fetchAutoApprove() {
   // Reset to OFF on page load/refresh — never restore previous state
   try {
@@ -1689,6 +1710,7 @@ document.addEventListener('DOMContentLoaded', () => {
   fetchTasks();
   fetchAutoApprove();
   fetchAutoQueue(); // BUG-05: sync auto-queue state on page load
+  fetchResponseLanguage();
   fetchMaxTerminals();
   connectWS();
   initSortable();
