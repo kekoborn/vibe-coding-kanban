@@ -203,6 +203,16 @@ app.post('/api/max-terminals', (req, res) => {
   res.json({ ok: true, maxTerminals });
 });
 
+app.get('/api/response-language', (req, res) => {
+  res.json({ language: db.getSetting('responseLanguage', '') });
+});
+
+app.put('/api/response-language', (req, res) => {
+  const language = String(req.body.language ?? '');
+  db.setSetting('responseLanguage', language);
+  res.json({ ok: true, language });
+});
+
 app.get('/api/skill-status', (req, res) => {
   const dst = path.join(process.env.HOME, '.claude', 'commands', 'kanban-lead.md');
   res.json({ installed: fs.existsSync(dst) });

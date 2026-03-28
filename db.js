@@ -83,6 +83,9 @@ db.exec(`
   )
 `);
 
+// Default settings
+db.exec(`INSERT OR IGNORE INTO settings (key, value) VALUES ('responseLanguage', '')`);
+
 const _getSetting = db.prepare(`SELECT value FROM settings WHERE key = ?`);
 const _setSetting = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
 
