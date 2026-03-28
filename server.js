@@ -321,6 +321,11 @@ function buildPromptWithAttachments(task) {
   let attachments = [];
   try { attachments = JSON.parse(task.attachments || '[]'); } catch {}
 
+  const lang = db.getSetting('responseLanguage');
+  if (lang) {
+    prompt = `IMPORTANT: You MUST respond entirely in ${lang}. All your output, explanations, comments in code, and commit messages must be in ${lang}.\n\n` + prompt;
+  }
+
   if (attachments.length === 0) return prompt;
 
   const lines = ['\n\n[ATTACHED CONTEXT]'];
