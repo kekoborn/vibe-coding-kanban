@@ -376,10 +376,10 @@ class TerminalManager {
       return;
     }
 
-    this._runInProject(projectPath, proj, taskId, cwd, prompt);
+    this._runInProject(projectPath, proj, taskId, cwd, prompt, command);
   }
 
-  _runInProject(projectPath, proj, taskId, cwd, prompt) {
+  _runInProject(projectPath, proj, taskId, cwd, prompt, command) {
     if (typeof addLog === 'function') addLog(`[Terminal] spawn new session #${taskId} in ${projectPath}`, 'pty');
     proj.currentTaskId = taskId;
     proj.running = true;
@@ -401,7 +401,7 @@ class TerminalManager {
       this._ws('terminal:spawn', {
         termId: proj.termId,
         taskId,
-        command: 'claude',  // interactive mode — won't exit after task
+        command: command || 'claude',  // interactive mode — won't exit after task
         cwd,
         autoApprove: true,
         cols: proj.term.cols,

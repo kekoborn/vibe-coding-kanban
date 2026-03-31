@@ -308,11 +308,6 @@ function buildPromptWithAttachments(task) {
   let attachments = [];
   try { attachments = JSON.parse(task.attachments || '[]'); } catch {}
 
-  const lang = db.getSetting('responseLanguage');
-  if (lang) {
-    prompt = `IMPORTANT: You MUST respond entirely in ${lang}. All your output, explanations, comments in code, and commit messages must be in ${lang}.\n\n` + prompt;
-  }
-
   if (attachments.length === 0) return prompt;
 
   const lines = ['\n\n[ATTACHED CONTEXT]'];
@@ -324,6 +319,14 @@ function buildPromptWithAttachments(task) {
     }
   }
   return prompt + lines.join('\n');
+}
+
+function buildClaudeCommand() {
+  const lang = db.getSetting('responseLanguage');
+  if (lang) {
+    return `claude --append-system-prompt "Respond entirely in ${lang}. All output, code comments, and commit messages must be in ${lang}."`;
+  }
+  return 'claude';
 }
 
 // Run a task — tell client to spawn claude in its task terminal
@@ -363,7 +366,7 @@ app.post('/api/tasks/:id/run', (req, res) => {
 
   // BUG-02: send task:run only to the originating client (not all tabs)
   const clientId = req.body?.clientId;
-  const runMsg = { type: 'task:run', taskId: id, prompt: rawPrompt, autoApprove: true, cwd: projectPath };
+  const runMsg = { type: 'task:run', taskId: id, prompt: rawPrompt, autoApprove: true, cwd: projectPath, command: buildClaudeCommand() };
   if (clientId && clientIdMap.has(clientId)) {
     sendToClient(clientId, runMsg);
   } else {
@@ -649,10 +652,10 @@ function runTaskOnServer(task) {
   } else if (clients.size === 0) {
     // Headless mode — no browser connected, spawn PTY directly on server
     console.log(`[ServerAutoQueue] Headless spawn for task #${task.id}`);
-    spawnShell(null, termId, { cwd: projectPath, command: 'claude', taskId: task.id, prompt: rawPrompt, autoApprove: true });
+    spawnShell(null, termId, { cwd: projectPath, command: buildClaudeCommand(), taskId: task.id, prompt: rawPrompt, autoApprove: true });
   } else {
     // Clients connected but no PTY yet — let the browser handle the spawn via task:run
-    broadcast({ type: 'task:run', taskId: task.id, prompt: rawPrompt, autoApprove: true, cwd: projectPath });
+    broadcast({ type: 'task:run', taskId: task.id, prompt: rawPrompt, autoApprove: true, cwd: projectPath, command: buildClaudeCommand() });
   }
 
   console.log(`[ServerAutoQueue] Started task #${task.id} "${task.title}"`);
