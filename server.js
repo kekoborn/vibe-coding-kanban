@@ -63,7 +63,6 @@ const TASK_START_DELAY = 4000; // delay before sending next task prompt (let Cla
 const MAX_CONCURRENT_TASKS = 5; // max tasks running simultaneously (0 = unlimited)
 let autoApproveEnabled = db.getSetting('autoApproveEnabled', 'false') === 'true';
 let autoQueueEnabled = db.getSetting('autoQueueEnabled', 'false') === 'true';
-let maxTerminals = parseInt(db.getSetting('maxTerminals', '0')) || 0;
 
 // Rate-limited terminals — termIds currently blocked by API rate limit
 const rateLimitedTerms = new Set();
@@ -190,18 +189,6 @@ app.get('/api/auto-queue', (req, res) => {
   res.json({ enabled: autoQueueEnabled });
 });
 
-app.get('/api/max-terminals', (req, res) => {
-  res.json({ maxTerminals });
-});
-
-app.post('/api/max-terminals', (req, res) => {
-  const value = Math.max(0, parseInt(req.body.value) || 0);
-  maxTerminals = value;
-  db.setSetting('maxTerminals', maxTerminals);
-  console.log(`[MaxTerminals] Set to ${maxTerminals === 0 ? 'unlimited' : maxTerminals}`);
-  broadcast({ type: 'settings:maxTerminals', value: maxTerminals });
-  res.json({ ok: true, maxTerminals });
-});
 
 app.get('/api/response-language', (req, res) => {
   res.json({ language: db.getSetting('responseLanguage', '') });
@@ -357,20 +344,6 @@ app.post('/api/tasks/:id/run', (req, res) => {
     }
   }
 
-  // Enforce maxTerminals limit — if this task needs a NEW terminal tab and the limit is reached, reject
-  if (maxTerminals > 0) {
-    const termId = 'project:' + (task.project_path || 'default');
-    const needsNewTerminal = !globalPtys.has(termId);
-    // Count only project terminals (exclude helper)
-    const projectPtyCount = [...globalPtys.keys()].filter(k => k.startsWith('project:')).length;
-    if (needsNewTerminal && projectPtyCount >= maxTerminals) {
-      return res.status(429).json({
-        error: `Max terminal tabs reached (${maxTerminals}). Close a tab or increase the Terms limit.`,
-        activeTerminals: projectPtyCount,
-        limit: maxTerminals,
-      });
-    }
-  }
 
   const rawPrompt = buildPromptWithAttachments(task);
   const projectPath = task.project_path || process.env.HOME;
@@ -702,7 +675,6 @@ function triggerServerAutoQueue() {
     }
     // Enforce MAX_CONCURRENT_TASKS
     if (MAX_CONCURRENT_TASKS > 0 && (busyProjects.size + started.size) >= MAX_CONCURRENT_TASKS) break;
-    if (maxTerminals > 0 && (busyProjects.size + started.size) >= maxTerminals) break;
     started.add(proj);
     setTimeout(() => runTaskOnServer(task), 500);
   }

@@ -54,12 +54,6 @@
         <button id="theme-toggle" class="btn btn-theme-pill" onclick="toggleTheme()" title="Toggle light/dark theme"><span class="btn-theme-icon">&#9790;</span> Dark</button>
         <button id="logs-btn" class="btn btn-logs" onclick="toggleLogsPopup()" title="Show server & client logs">Logs</button>
         <a href="/analytics.html" class="btn btn-logs" title="Daily analytics report" style="text-decoration:none">Analytics</a>
-        <div class="max-terminals-control" title="Max concurrent terminals (∞ = unlimited)">
-          <button class="max-terminals-btn" onclick="setMaxTerminals(maxTerminals <= 1 ? 0 : maxTerminals - 1)" title="Decrease">−</button>
-          <span class="max-terminals-label">Terms:</span>
-          <span id="max-terminals-display" class="max-terminals-display">∞</span>
-          <button class="max-terminals-btn" onclick="setMaxTerminals(maxTerminals === 0 ? 1 : maxTerminals + 1)" title="Increase">+</button>
-        </div>
       </div>
       <div class="header-group">
         <button id="auto-approve-btn" class="btn btn-auto-queue" onclick="toggleAutoApprove()" title="Auto-approve Claude Code permission prompts">Auto-approve: OFF</button>

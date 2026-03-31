@@ -5,7 +5,6 @@ let ws = null;
 let autoQueueEnabled = false;
 let autoApproveEnabled = false;
 let _wsConnectedOnce = false;
-let maxTerminals = parseInt(localStorage.getItem('maxTerminals') || '0'); // 0 = unlimited
 
 // BUG-02: unique ID for this browser tab — sent in run requests so server
 // can broadcast task:run only to the originating client
@@ -142,7 +141,6 @@ function connectWS() {
       syncAutoQueue();
     }
     _wsConnectedOnce = true;
-    fetchMaxTerminals();
     // Re-attach terminal manager listeners on every (re)connect
     if (window.terminalManager) {
       window.terminalManager._attachWS();
@@ -283,11 +281,6 @@ function handleWSMessage(msg) {
       addLog(`[Settings] Auto-queue: ${msg.enabled ? 'ON' : 'OFF'}`, 'idle');
       autoQueueEnabled = msg.enabled;
       updateStartBtn();
-      break;
-
-    case 'settings:maxTerminals':
-      maxTerminals = msg.value;
-      updateMaxTerminalsUI();
       break;
 
     case 'terminal:spawned':
@@ -1331,15 +1324,6 @@ async function syncAutoQueue() {
   } catch {}
 }
 
-async function fetchMaxTerminals() {
-  try {
-    const res = await fetch('/api/max-terminals');
-    const data = await res.json();
-    maxTerminals = data.maxTerminals;
-    localStorage.setItem('maxTerminals', maxTerminals);
-    updateMaxTerminalsUI();
-  } catch {}
-}
 
 // Reset auto-queue to OFF on page load/refresh instead of restoring server state
 async function fetchAutoQueue() {
@@ -1565,22 +1549,6 @@ function isAnyRateLimitActive() {
   return false;
 }
 
-function setMaxTerminals(n) {
-  maxTerminals = Math.max(0, n);
-  localStorage.setItem('maxTerminals', maxTerminals);
-  updateMaxTerminalsUI();
-  addLog(`[MaxTerminals] Set to ${maxTerminals === 0 ? 'unlimited' : maxTerminals}`, 'idle');
-  fetch('/api/max-terminals', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ value: maxTerminals }),
-  }).catch(() => {});
-}
-
-function updateMaxTerminalsUI() {
-  const display = document.getElementById('max-terminals-display');
-  if (display) display.textContent = maxTerminals === 0 ? '∞' : maxTerminals;
-}
 
 let _autoQueueTimer = null;
 function tryAutoQueue() {
@@ -1619,8 +1587,6 @@ function _doAutoQueue() {
   for (const task of backlog) {
     const proj = task.project_path || '';
     if (busyProjects.has(proj) || started.has(proj)) continue;
-    // Respect maxTerminals limit (0 = unlimited)
-    if (maxTerminals > 0 && (busyProjects.size + started.size) >= maxTerminals) break;
     started.add(proj);
     addLog(`[AutoQueue] Starting task #${task.id} "${task.title}" for ${proj || 'HOME'}`, 'client');
     console.log(`[AutoQueue] Starting task #${task.id} for project ${proj}`);
@@ -1711,7 +1677,6 @@ document.addEventListener('DOMContentLoaded', () => {
   fetchAutoApprove();
   fetchAutoQueue(); // BUG-05: sync auto-queue state on page load
   fetchResponseLanguage();
-  fetchMaxTerminals();
   connectWS();
   initSortable();
   initModal();
