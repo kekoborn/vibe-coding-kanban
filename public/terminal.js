@@ -309,7 +309,8 @@ class TerminalManager {
       const proj = this._getOrCreateProjectTerminal(projectPath);
       proj.currentTaskId = t.currentTaskId;
       proj.running = !!t.running;
-      proj.sessionAlive = true;
+      // sessionAlive = true only if PTY is a Claude session (has command), not idle ZSH
+      proj.sessionAlive = !!(t.command);
 
       if (t.running) proj.tabEl.classList.add('running');
 

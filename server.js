@@ -859,6 +859,7 @@ wss.on('connection', (ws) => {
             currentTaskId: entry.meta.currentTaskId,
             running: entry.meta.running,
             isHelper: entry.meta.isHelper,
+            command: entry.meta.command || null,
           });
         }
         ws.send(JSON.stringify({ type: 'terminal:list', terminals }));
