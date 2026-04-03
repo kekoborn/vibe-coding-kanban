@@ -221,6 +221,11 @@ function handleWSMessage(msg) {
       // Switch to the correct terminal tab (server handled PTY directly, no task:run was sent)
       if (msg.cwd && window.terminalManager) {
         window.terminalManager._switchToProject(msg.cwd);
+        // Track currentTaskId so onTaskCompleted can find this project when the task completes
+        const _proj = window.terminalManager.projects.get(msg.cwd);
+        if (_proj && !_proj.currentTaskId) {
+          _proj.currentTaskId = msg.taskId;
+        }
       }
       break;
 
