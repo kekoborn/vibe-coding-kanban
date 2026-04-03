@@ -287,10 +287,12 @@ class TerminalManager {
 
   _restoreFromServer(terminals) {
     let helperFound = false;
+    const serverTermIds = new Set();
 
     for (const t of terminals) {
       if (t.termId === 'helper') {
         helperFound = true;
+        serverTermIds.add('helper');
         this._ws('terminal:reattach', { termId: 'helper' });
         continue;
       }
@@ -300,6 +302,8 @@ class TerminalManager {
 
       const projectPath = t.cwd || '';
       if (!projectPath) continue;
+
+      serverTermIds.add(t.termId);
 
       // Create tab + xterm widget and reattach to existing PTY
       const proj = this._getOrCreateProjectTerminal(projectPath);
@@ -311,6 +315,13 @@ class TerminalManager {
 
       // Reattach — server will replay buffered output
       this._ws('terminal:reattach', { termId: proj.termId });
+    }
+
+    // Reset sessionAlive for project terminals not found on server (e.g. after server restart)
+    for (const [, proj] of this.projects) {
+      if (!serverTermIds.has(proj.termId)) {
+        proj.sessionAlive = false;
+      }
     }
 
     if (!helperFound) {
@@ -510,7 +521,7 @@ class TerminalManager {
         const task = tasks.find(t => t.id === next.taskId);
         const label = task ? task.title : `#${next.taskId}`;
         proj.term.write(`\r\n\x1b[90m── Running next: ${label} ──\x1b[0m\r\n`);
-        setTimeout(() => this._runInProject(projectPath, proj, next.taskId, next.cwd, next.prompt), 1000);
+        setTimeout(() => this._runInProject(projectPath, proj, next.taskId, next.cwd, next.prompt, next.command), 1000);
       } else {
         proj.term.write('\r\n\x1b[90m── Session ended ──\x1b[0m\r\n');
         this._updateTabBadge(proj);
