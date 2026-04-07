@@ -20,41 +20,7 @@ PORT=9999 node server.js  # на кастомном порту
 | Команда | Описание |
 |---------|---------|
 | `/kanban-lead` | Интервью → план → создать задачи |
-| `/work` | Автономный режим: взять задачу → выполнить → закоммитить → следующая |
-| `/next` | Взять следующую задачу и начать работу |
 | `/status` | Отчёт: колонки, аналитика, активные проекты |
-
-## RalfLoop — автономный ночной режим
-
-Паттерн: Claude работает сам, пока не закончатся задачи в backlog.
-
-**Как работает:**
-1. Stop hook (`hooks/stop-hook.sh`) перехватывает выход Claude
-2. Запрашивает `GET /api/tasks/next` — если есть задача, блокирует выход (exit 2)
-3. Выводит задачу в терминал — Claude продолжает с новым промптом
-4. Цикл завершается когда backlog пуст (hook возвращает exit 0)
-
-**Установка stop hook** — добавить в `.claude/settings.json` проекта:
-```json
-{
-  "hooks": {
-    "Stop": [{
-      "matcher": "",
-      "hooks": [{
-        "type": "command",
-        "command": "bash /Users/ruslanalyev/Documents/Projects/claude-kanban/hooks/stop-hook.sh"
-      }]
-    }]
-  }
-}
-```
-
-**Запуск автономного режима:**
-```bash
-claude --dangerously-skip-permissions
-```
-
-Или через UI: включить Auto-queue + Auto-approve на доске.
 
 Для чистого инстанса (видео, демо): скопируй папку в /tmp, удали kanban.db, запусти с PORT=.
 

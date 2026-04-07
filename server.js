@@ -163,29 +163,6 @@ app.delete('/api/tasks/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// Next task for stop hook (RalfLoop) — picks highest-priority backlog task, moves to in_progress.
-// Respects auto-queue: skips projects already busy in in_progress to avoid race conditions.
-app.get('/api/tasks/next', (req, res) => {
-  const projectPath = (req.query.project_path || '').trim();
-  const inProgress = db.getTasksByColumn('in_progress');
-  const busyProjects = new Set(inProgress.map(t => t.project_path || ''));
-  const allBacklog = db.getTasksByColumn('backlog');
-  const candidates = allBacklog.filter(t => {
-    if (t.priority === 'hold') return false;
-    const proj = t.project_path || '';
-    if (busyProjects.has(proj)) return false; // project already running
-    if (projectPath && proj && proj !== projectPath) return false;
-    return true;
-  });
-  if (!candidates.length) return res.json(null);
-  const task = candidates[0]; // already sorted by priority, position
-  const moved = db.moveTask({ id: task.id, column: 'in_progress' });
-  db.logEvent(task.id, 'started', { project_path: task.project_path, via: 'stop_hook' });
-  broadcast({ type: 'task:moved', task: moved });
-  updateCaffeinate();
-  res.json(moved);
-});
-
 // Auto-approve toggle
 app.post('/api/auto-approve', (req, res) => {
   autoApproveEnabled = !!req.body.enabled;
