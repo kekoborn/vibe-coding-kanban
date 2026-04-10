@@ -14,8 +14,8 @@
       var t = localStorage.getItem('theme') || 'light';
       if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
       document.addEventListener('DOMContentLoaded', function() {
-        var btn = document.getElementById('theme-toggle');
-        if (btn) btn.innerHTML = t === 'dark' ? '<span class="btn-theme-icon">&#9790;</span> Dark' : '<span class="btn-theme-icon">&#9728;</span> Light';
+        var lbl = document.getElementById('theme-label');
+        if (lbl) lbl.textContent = t === 'dark' ? 'Dark' : 'Light';
       });
     })();
     function toggleTheme() {
@@ -27,9 +27,51 @@
         document.documentElement.removeAttribute('data-theme');
       }
       localStorage.setItem('theme', next);
-      document.getElementById('theme-toggle').innerHTML = next === 'dark' ? '<span class="btn-theme-icon">&#9790;</span> Dark' : '<span class="btn-theme-icon">&#9728;</span> Light';
+      var lbl = document.getElementById('theme-label');
+      if (lbl) lbl.textContent = next === 'dark' ? 'Dark' : 'Light';
       if (typeof updateAllTerminalThemes === 'function') updateAllTerminalThemes();
     }
+    function toggleTerminals() {
+      var panel = document.getElementById('terminal-panel');
+      var resizer = document.getElementById('resizer');
+      var kanban = document.getElementById('kanban');
+      var btn = document.getElementById('terminals-toggle-btn');
+      var isHidden = panel.style.display === 'none';
+      panel.style.display = isHidden ? '' : 'none';
+      resizer.style.display = isHidden ? '' : 'none';
+      if (btn) btn.classList.toggle('active', isHidden);
+      localStorage.setItem('terminalsVisible', isHidden ? '1' : '0');
+      if (isHidden) {
+        // Terminals now visible — re-apply saved split ratio
+        setTimeout(function() {
+          if (typeof window._applySplit === 'function') window._applySplit();
+          if (typeof updateAllTerminalThemes === 'function') updateAllTerminalThemes();
+          if (window.terminalManager) window.terminalManager.fitAll();
+        }, 50);
+      } else {
+        // Terminals now hidden — reset kanban to fill full width
+        if (kanban) {
+          kanban.style.flex = '';
+          kanban.style.width = '';
+        }
+        if (panel) {
+          panel.style.flex = '';
+          panel.style.width = '';
+        }
+      }
+    }
+    document.addEventListener('DOMContentLoaded', function() {
+      var vis = localStorage.getItem('terminalsVisible');
+      if (vis !== '1') {
+        var panel = document.getElementById('terminal-panel');
+        var resizer = document.getElementById('resizer');
+        if (panel) panel.style.display = 'none';
+        if (resizer) resizer.style.display = 'none';
+      } else {
+        var btn = document.getElementById('terminals-toggle-btn');
+        if (btn) btn.classList.add('active');
+      }
+    });
   </script>
 
   <div class="app-shell">
@@ -57,6 +99,10 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
           Analytics
         </a>
+        <button class="sidebar-nav-item sidebar-btn" id="terminals-toggle-btn" onclick="toggleTerminals()" title="Show/hide terminal panel">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          Terminals
+        </button>
         <div class="sidebar-section-label">Agent Controls</div>
         <button class="sidebar-nav-item sidebar-btn" id="auto-approve-btn" onclick="toggleAutoApprove()" title="Auto-approve Claude Code permission prompts">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
@@ -71,7 +117,7 @@
       <div class="sidebar-footer">
         <button id="theme-toggle" class="sidebar-nav-item sidebar-btn" onclick="toggleTheme()" title="Toggle theme">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-          <span class="btn-theme-icon-label">Light</span>
+          <span id="theme-label">Light</span>
         </button>
       </div>
     </aside>

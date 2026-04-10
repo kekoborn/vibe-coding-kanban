@@ -1688,6 +1688,12 @@ function initResizer() {
   });
 
   function applySplit() {
+    // Only apply fixed widths when terminal panel is actually visible
+    if (terminal.style.display === 'none') {
+      kanban.style.flex = '';
+      kanban.style.width = '';
+      return;
+    }
     const saved = localStorage.getItem('kanban:vSplit');
     const ratio = saved ? parseFloat(saved) : 0.5;
     const totalWidth = document.querySelector('main').getBoundingClientRect().width;
@@ -1700,6 +1706,9 @@ function initResizer() {
     terminal.style.width = terminalWidth + 'px';
     if (window.terminalManager) window.terminalManager.fitAll();
   }
+
+  // Expose globally so toggleTerminals can call it
+  window._applySplit = applySplit;
 
   // Apply on init
   requestAnimationFrame(applySplit);
