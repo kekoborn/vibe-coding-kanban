@@ -1601,6 +1601,9 @@ function parseResetTime(timeStr) {
 
 // On startup, reset any tasks stuck in in_progress — their PTY processes no longer exist
 (function cleanupStuckTasks() {
+  // Also clear stale 'pending' review_status — reviewer process died with the server
+  db.db.prepare(`UPDATE tasks SET review_status = NULL, review_notes = '' WHERE review_status = 'pending'`).run();
+
   const stuck = db.getTasksByColumn('in_progress');
   if (stuck.length > 0) {
     stuck.forEach(task => {
