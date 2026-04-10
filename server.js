@@ -154,10 +154,15 @@ app.put('/api/tasks/:id/move', (req, res) => {
   if (column && !db.VALID_COLUMNS.includes(column)) {
     return res.status(400).json({ error: `Invalid column: "${column}". Note: "hold" is a priority level — set priority field instead.` });
   }
+  const before = db.getTaskById(parseInt(req.params.id));
   const task = db.moveTask({ id: parseInt(req.params.id), column, position });
   if (!task) return res.status(404).json({ error: 'not found' });
   broadcast({ type: 'task:moved', task });
   updateCaffeinate();
+  // Trigger auto-review when manually dragging to review column
+  if (column === 'review' && before?.column !== 'review') {
+    triggerAutoReview(task.id, db.getTaskById(task.id), task.last_response || '');
+  }
   res.json(task);
 });
 
@@ -452,6 +457,7 @@ app.post('/api/tasks/:id/complete', (req, res) => {
       project_path: full.project_path,
     });
     updateCaffeinate();
+    triggerAutoReview(id, full, full.last_response || '');
   }
   res.json({ ok: true });
 });
@@ -583,6 +589,35 @@ app.get('/api/tasks/:id/status', (req, res) => {
   res.json({ taskId: id, alive, status: alive ? 'running' : 'none' });
 });
 
+// Shared auto-review trigger — call after any task lands in review column
+function triggerAutoReview(taskId, task, lastResponse = '') {
+  if (!autoReviewEnabled) return;
+  db.setReviewResult(taskId, 'pending', '');
+  broadcast({ type: 'task:review-started', taskId });
+  runAutoReview({ task, lastResponse })
+    .then(result => {
+      db.setReviewResult(taskId, result.status, result.notes);
+      broadcast({ type: 'task:review-result', taskId, status: result.status, notes: result.notes });
+      if (result.status === 'approved') {
+        db.moveTask({ id: taskId, column: 'done' });
+        broadcast({ type: 'task:moved', task: db.getTaskById(taskId) });
+        console.log(`[AutoReview] Task #${taskId} auto-approved → done`);
+      } else {
+        const current = db.getTaskById(taskId);
+        const feedbackPrefix = `[REVIEW FEEDBACK]\n${result.notes}\n\n[ORIGINAL TASK]\n`;
+        db.updateTask({ id: taskId, description: feedbackPrefix + (current.description || '') });
+        db.moveTask({ id: taskId, column: 'backlog' });
+        broadcast({ type: 'task:moved', task: db.getTaskById(taskId) });
+        console.log(`[AutoReview] Task #${taskId} needs changes → returned to backlog`);
+        setTimeout(triggerServerAutoQueue, 2000);
+      }
+    })
+    .catch(err => {
+      console.error(`[AutoReview] Task #${taskId} error:`, err.message);
+      broadcast({ type: 'task:review-result', taskId, status: 'error', notes: err.message });
+    });
+}
+
 // Complete a task from server-side idle detection
 function completeTaskFromServer(taskId, termId) {
   const task = db.getTaskById(taskId);
@@ -637,39 +672,7 @@ function completeTaskFromServer(taskId, termId) {
   });
   console.log(`[Complete] Task #${taskId} moved to review (idle detection)`);
 
-  // Trigger auto-review if enabled
-  if (autoReviewEnabled) {
-    db.setReviewResult(taskId, 'pending', '');
-    broadcast({ type: 'task:review-started', taskId });
-    runAutoReview({ task: full, lastResponse })
-      .then(result => {
-        db.setReviewResult(taskId, result.status, result.notes);
-        db.setReviewResult(taskId, result.status, result.notes);
-        broadcast({ type: 'task:review-result', taskId, status: result.status, notes: result.notes });
-        if (result.status === 'approved') {
-          db.moveTask({ id: taskId, column: 'done' });
-          broadcast({ type: 'task:moved', task: db.getTaskById(taskId) });
-          console.log(`[AutoReview] Task #${taskId} auto-approved → done`);
-        } else {
-          // Prepend reviewer feedback to description so Claude knows what to fix on re-run
-          const current = db.getTaskById(taskId);
-          const feedbackPrefix = `[REVIEW FEEDBACK]\n${result.notes}\n\n[ORIGINAL TASK]\n`;
-          db.updateTask({
-            id: taskId,
-            description: feedbackPrefix + (current.description || ''),
-          });
-          db.moveTask({ id: taskId, column: 'backlog' });
-          broadcast({ type: 'task:moved', task: db.getTaskById(taskId) });
-          console.log(`[AutoReview] Task #${taskId} needs changes → returned to backlog`);
-          setTimeout(triggerServerAutoQueue, 2000);
-        }
-      })
-      .catch(err => {
-        console.error(`[AutoReview] Task #${taskId} error:`, err.message);
-        broadcast({ type: 'task:review-result', taskId, status: 'error', notes: err.message });
-      });
-  }
-
+  triggerAutoReview(taskId, full, lastResponse);
   setTimeout(triggerServerAutoQueue, 1000);
 }
 
