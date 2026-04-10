@@ -396,6 +396,17 @@ app.post('/api/tasks/:id/run', (req, res) => {
   const rawPrompt = buildPromptWithAttachments(task);
   const projectPath = task.project_path || process.env.HOME;
 
+  // Kill idle PTY session so Claude starts clean (avoids "Queued:" in existing session)
+  const termId = 'project:' + (task.project_path || 'default');
+  const existingPty = globalPtys.get(termId);
+  const existingEntry = termTaskMap.get(termId);
+  if (existingPty?.pty && !existingEntry?.taskId) {
+    console.log(`[Run] Killing idle PTY ${termId} for clean start`);
+    try { existingPty.pty.kill(); } catch {}
+    globalPtys.delete(termId);
+    termTaskMap.delete(termId);
+  }
+
   // BUG-18: clear last_response before running to avoid stale response on card
   db.setLastResponse(id, '');
 
