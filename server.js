@@ -644,13 +644,24 @@ function completeTaskFromServer(taskId, termId) {
     runAutoReview({ task: full, lastResponse })
       .then(result => {
         db.setReviewResult(taskId, result.status, result.notes);
+        db.setReviewResult(taskId, result.status, result.notes);
         broadcast({ type: 'task:review-result', taskId, status: result.status, notes: result.notes });
         if (result.status === 'approved') {
-          const done = db.moveTask({ id: taskId, column: 'done' });
+          db.moveTask({ id: taskId, column: 'done' });
           broadcast({ type: 'task:moved', task: db.getTaskById(taskId) });
           console.log(`[AutoReview] Task #${taskId} auto-approved → done`);
         } else {
-          console.log(`[AutoReview] Task #${taskId} needs changes → stays in review`);
+          // Prepend reviewer feedback to description so Claude knows what to fix on re-run
+          const current = db.getTaskById(taskId);
+          const feedbackPrefix = `[REVIEW FEEDBACK]\n${result.notes}\n\n[ORIGINAL TASK]\n`;
+          db.updateTask({
+            id: taskId,
+            description: feedbackPrefix + (current.description || ''),
+          });
+          db.moveTask({ id: taskId, column: 'backlog' });
+          broadcast({ type: 'task:moved', task: db.getTaskById(taskId) });
+          console.log(`[AutoReview] Task #${taskId} needs changes → returned to backlog`);
+          setTimeout(triggerServerAutoQueue, 2000);
         }
       })
       .catch(err => {
