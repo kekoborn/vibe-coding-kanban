@@ -124,7 +124,10 @@ function updateCaffeinate() {
 // --- REST API ---
 
 app.get('/api/tasks', (req, res) => {
-  res.json(db.getAllTasks());
+  const doneLimit = parseInt(req.query.done_limit) || 50;
+  const { tasks, doneTotal } = db.getTasksLimited(doneLimit);
+  res.set('X-Done-Total', String(doneTotal));
+  res.json(tasks);
 });
 
 app.post('/api/tasks', (req, res) => {

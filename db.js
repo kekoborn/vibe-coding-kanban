@@ -104,6 +104,21 @@ const getAllTasks = db.prepare(`
     position
 `);
 
+const getNonDoneTasks = db.prepare(`
+  SELECT * FROM tasks WHERE "column" != 'done'
+  ORDER BY "column",
+    CASE priority WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 WHEN 'hold' THEN 3 END,
+    position
+`);
+
+const getDoneTasksLimited = db.prepare(`
+  SELECT * FROM tasks WHERE "column" = 'done'
+  ORDER BY COALESCE(column_changed_at, created_at) DESC
+  LIMIT ?
+`);
+
+const getDoneCount = db.prepare(`SELECT COUNT(*) as count FROM tasks WHERE "column" = 'done'`);
+
 const getTaskById = db.prepare(`
   SELECT * FROM tasks WHERE id = ?
 `);
@@ -184,6 +199,13 @@ module.exports = {
 
   getAllTasks() {
     return getAllTasks.all();
+  },
+
+  getTasksLimited(doneLimit = 50) {
+    const nonDone = getNonDoneTasks.all();
+    const done = getDoneTasksLimited.all(doneLimit);
+    const doneTotal = getDoneCount.get().count;
+    return { tasks: [...nonDone, ...done], doneTotal };
   },
 
   getTaskById(id) {

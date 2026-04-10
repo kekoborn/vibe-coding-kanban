@@ -778,16 +778,16 @@ main {
   display: flex;
   gap: 10px;
   padding: 14px;
-  overflow-x: auto;
   flex: 1;
   min-width: 0;
+  overflow: hidden;
 }
 
 .column {
   background: transparent;
   border-radius: 10px;
   border: none;
-  min-width: 200px;
+  min-width: 0;
   flex: 1 1 0;
   display: flex;
   flex-direction: column;
@@ -796,9 +796,9 @@ main {
 }
 
 .column.collapsed {
-  min-width: 44px;
-  max-width: 44px;
-  flex: 0 0 44px;
+  min-width: 36px;
+  max-width: 36px;
+  flex: 0 0 36px;
   overflow: hidden;
 }
 
@@ -1293,7 +1293,15 @@ body.resizing #resizer {
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  background: #000;
+  background: var(--term-bg, #0d1117);
+}
+
+:root {
+  --term-bg: #ffffff;
+}
+
+[data-theme="dark"] {
+  --term-bg: #0d1117;
 }
 
 #helper-section {

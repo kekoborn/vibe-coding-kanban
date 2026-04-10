@@ -1,11 +1,20 @@
 // --- State ---
 let tasks = [];
+let doneTotalCount = 0; // real total of done tasks (server may limit what's sent)
 let sessionStatuses = {}; // taskId -> { status, resetTime }
 const liveActivity = new Map(); // taskId -> current tool string
 let ws = null;
 let autoQueueEnabled = false;
 let autoApproveEnabled = false;
 let _wsConnectedOnce = false;
+
+// --- Debounced render ---
+let _renderPending = false;
+function scheduleRender() {
+  if (_renderPending) return;
+  _renderPending = true;
+  requestAnimationFrame(() => { _renderPending = false; renderBoard(); });
+}
 
 // BUG-02: unique ID for this browser tab — sent in run requests so server
 // can broadcast task:run only to the originating client
@@ -56,6 +65,7 @@ function filterTasks(taskList) {
 async function fetchTasks() {
   const res = await fetch('/api/tasks');
   tasks = await res.json();
+  doneTotalCount = parseInt(res.headers.get('X-Done-Total') || tasks.filter(t => t.column === 'done').length);
   renderBoard();
   // BUG-20: restore sessionStatuses for in_progress tasks after page reload
   const inProgressTasks = tasks.filter(t => t.column === 'in_progress');
@@ -66,7 +76,7 @@ async function fetchTasks() {
         .then(data => {
           if (data.alive) {
             sessionStatuses[t.id] = { status: 'running' };
-            renderBoard();
+            scheduleRender();
           }
         })
         .catch(() => {});
@@ -175,10 +185,16 @@ function handleWSMessage(msg) {
       // BUG-07: detect if a slot freed up from in_progress (for tryAutoQueue)
       const prevTask = tasks.find(t => t.id === msg.task.id);
       const wasInProgress = prevTask?.column === 'in_progress';
+      const prevColumn = prevTask?.column;
       const idx = tasks.findIndex(t => t.id === msg.task.id);
       if (idx >= 0) tasks[idx] = msg.task;
       else tasks.push(msg.task);
-      renderBoard();
+      // Update doneTotalCount when tasks move to/from done
+      if (msg.type === 'task:moved' || msg.type === 'task:created') {
+        if (msg.task.column === 'done' && prevColumn !== 'done') doneTotalCount++;
+        else if (msg.task.column !== 'done' && prevColumn === 'done') doneTotalCount--;
+      }
+      scheduleRender();
       if (msg.type === 'task:moved') {
         // Only check completion when a task leaves in_progress (not on manual ✓ Done click)
         if (wasInProgress) checkAllTasksCompleted();
@@ -195,8 +211,9 @@ function handleWSMessage(msg) {
     case 'task:deleted':
       // BUG-04: clear sessionStatus for the deleted task
       delete sessionStatuses[msg.id];
+      if (tasks.find(t => t.id === msg.id)?.column === 'done') doneTotalCount--;
       tasks = tasks.filter(t => t.id !== msg.id);
-      renderBoard();
+      scheduleRender();
       break;
 
     case 'task:run':
@@ -205,7 +222,7 @@ function handleWSMessage(msg) {
         window.terminalManager.runInTaskTerminal(msg.taskId, msg.command, msg.cwd, msg.prompt);
       }
       sessionStatuses[msg.taskId] = { status: 'running' };
-      renderBoard();
+      scheduleRender();
       break;
 
     case 'task:activity': {
@@ -231,12 +248,12 @@ function handleWSMessage(msg) {
       }
       delete sessionStatuses[msg.taskId];
       liveActivity.delete(msg.taskId);
-      renderBoard();
+      scheduleRender();
       break;
 
     case 'session:started':
       sessionStatuses[msg.taskId] = { status: 'running' };
-      renderBoard();
+      scheduleRender();
       // Switch to the correct terminal tab (server handled PTY directly, no task:run was sent)
       if (msg.cwd && window.terminalManager) {
         window.terminalManager._switchToProject(msg.cwd);
@@ -250,7 +267,7 @@ function handleWSMessage(msg) {
 
     case 'session:status':
       sessionStatuses[msg.taskId] = { status: msg.status, resetTime: msg.resetTime };
-      renderBoard();
+      scheduleRender();
       updateTerminalStatus(msg.taskId);
       break;
 
@@ -259,7 +276,7 @@ function handleWSMessage(msg) {
       addLog(`[Complete] Task #${msg.taskId} "${t?.title || ''}" → review`, 'complete');
       sessionStatuses[msg.taskId] = { status: 'completed' };
       liveActivity.delete(msg.taskId);
-      renderBoard();
+      scheduleRender();
       if (window.terminalManager) {
         window.terminalManager.onTaskCompleted(msg.taskId);
       }
@@ -270,13 +287,13 @@ function handleWSMessage(msg) {
 
     case 'session:stopped':
       delete sessionStatuses[msg.taskId];
-      renderBoard();
+      scheduleRender();
       break;
 
     case 'ratelimit:detected':
       addLog(`[RateLimit] Detected! Task #${msg.taskId}, reset: ${msg.resetTime}`, 'error');
       sessionStatuses[msg.taskId] = { status: 'waiting_reset', resetTime: msg.resetTime, continueAt: msg.continueAt };
-      renderBoard();
+      scheduleRender();
       updateTerminalStatus(msg.taskId);
       showRateLimitOverlay(msg.taskId, msg.resetTime, msg.continueAt);
       break;
@@ -286,7 +303,7 @@ function handleWSMessage(msg) {
       if (msg.taskId) {
         sessionStatuses[msg.taskId] = { status: 'running' };
       }
-      renderBoard();
+      scheduleRender();
       updateTerminalStatus(msg.taskId);
       hideRateLimitOverlay();
       break;
@@ -434,7 +451,7 @@ function renderBoard() {
       return a.position - b.position;
     });
 
-    count.textContent = colTasks.length;
+    count.textContent = col === 'done' ? doneTotalCount : colTasks.length;
 
     if (col === 'review') {
       const approveBtn = document.getElementById('approve-all-btn');
@@ -487,6 +504,7 @@ function renderTaskCard(task, column) {
   }
 
   const ticketId = `<span class="ticket-id">TASK-${task.id}</span>`;
+  const isRunning = status?.status === 'running' || status?.status === 'waiting_reset';
 
   let statusBadge = '';
   if (status?.status === 'running') {
@@ -507,7 +525,6 @@ function renderTaskCard(task, column) {
   const priorityBadge = `<span class="priority-badge ${priority}">${PRIORITY_LABELS[priority]}</span>`;
 
   let actions = '';
-  const isRunning = status?.status === 'running' || status?.status === 'waiting_reset';
 
   if (!isRunning && column !== 'done') {
     actions += `<button class="btn btn-sm btn-run" onclick="event.stopPropagation(); runTask(${task.id})">▶ Run</button>`;

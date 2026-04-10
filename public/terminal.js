@@ -74,9 +74,9 @@ const XTERM_SOLARIZED_LIGHT_THEME = {
 
 function getXtermTheme() {
   const theme = document.documentElement.getAttribute('data-theme');
-  if (theme === 'light') return XTERM_LIGHT_THEME;
+  if (theme === 'dark') return XTERM_DARK_THEME;
   if (theme === 'solarized-light') return XTERM_SOLARIZED_LIGHT_THEME;
-  return XTERM_DARK_THEME;
+  return XTERM_LIGHT_THEME; // default is light (no data-theme attribute)
 }
 
 const XTERM_OPTS = {
@@ -720,10 +720,13 @@ function updateAllTerminalThemes() {
   const tm = window.terminalManager;
   if (!tm) return;
   const theme = getXtermTheme();
-  if (tm.helper) tm.helper.term.options.theme = theme;
-  for (const [, proj] of tm.projects) {
-    proj.term.options.theme = theme;
+  function applyTheme(obj) {
+    if (!obj || !obj.term) return;
+    obj.term.options.theme = theme;
+    try { obj.term.refresh(0, obj.term.rows - 1); } catch (e) {}
   }
+  applyTheme(tm.helper);
+  for (const [, proj] of tm.projects) applyTheme(proj);
 }
 
 // Wait for WS, then init
