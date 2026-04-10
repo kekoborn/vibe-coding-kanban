@@ -62,6 +62,10 @@ try { db.exec(`ALTER TABLE tasks ADD COLUMN started_at TEXT DEFAULT NULL`); } ca
 try { db.exec(`ALTER TABLE tasks ADD COLUMN completed_at TEXT DEFAULT NULL`); } catch {}
 try { db.exec(`ALTER TABLE tasks ADD COLUMN return_count INTEGER DEFAULT 0`); } catch {}
 
+// Migration: auto-review columns
+try { db.exec(`ALTER TABLE tasks ADD COLUMN review_status TEXT DEFAULT NULL`); } catch {}
+try { db.exec(`ALTER TABLE tasks ADD COLUMN review_notes TEXT DEFAULT ''`); } catch {}
+
 // Analytics events table
 db.exec(`
   CREATE TABLE IF NOT EXISTS task_events (
@@ -85,6 +89,7 @@ db.exec(`
 
 // Default settings
 db.exec(`INSERT OR IGNORE INTO settings (key, value) VALUES ('responseLanguage', '')`);
+db.exec(`INSERT OR IGNORE INTO settings (key, value) VALUES ('autoReviewEnabled', 'false')`);
 
 const _getSetting = db.prepare(`SELECT value FROM settings WHERE key = ?`);
 const _setSetting = db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
@@ -266,6 +271,16 @@ module.exports = {
   setLastResponse(id, text) {
     setLastResponse.run(text, id);
     return getTaskById.get(id);
+  },
+
+  setReviewResult(id, status, notes) {
+    db.prepare(`UPDATE tasks SET review_status = ?, review_notes = ?, updated_at = datetime('now') WHERE id = ?`)
+      .run(status, notes, id);
+    return getTaskById.get(id);
+  },
+
+  clearReviewResult(id) {
+    db.prepare(`UPDATE tasks SET review_status = NULL, review_notes = '' WHERE id = ?`).run(id);
   },
 
   setAttachments(id, attachments) {

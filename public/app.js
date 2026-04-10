@@ -6,6 +6,7 @@ const liveActivity = new Map(); // taskId -> current tool string
 let ws = null;
 let autoQueueEnabled = false;
 let autoApproveEnabled = false;
+let autoReviewEnabled = false;
 let _wsConnectedOnce = false;
 
 // --- Debounced render ---
@@ -325,6 +326,28 @@ function handleWSMessage(msg) {
       updateStartBtn();
       break;
 
+    case 'settings:autoReview':
+      autoReviewEnabled = msg.enabled;
+      updateAutoReviewBtn();
+      break;
+
+    case 'task:review-started': {
+      const t = tasks.find(t => t.id === msg.taskId);
+      if (t) { t.review_status = 'pending'; t.review_notes = ''; }
+      addLog(`[AutoReview] Reviewing task #${msg.taskId}…`, 'ws');
+      scheduleRender();
+      break;
+    }
+
+    case 'task:review-result': {
+      const t = tasks.find(t => t.id === msg.taskId);
+      if (t) { t.review_status = msg.status; t.review_notes = msg.notes || ''; }
+      const icon = msg.status === 'approved' ? '✅' : msg.status === 'error' ? '⚠️' : '🔁';
+      addLog(`[AutoReview] Task #${msg.taskId}: ${icon} ${msg.status}`, msg.status === 'approved' ? 'complete' : 'error');
+      scheduleRender();
+      break;
+    }
+
     case 'terminal:spawned':
       addLog(`[PTY] Spawned: ${msg.termId}`, 'pty');
       break;
@@ -581,6 +604,20 @@ function renderTaskCard(task, column) {
     ? `<div class="task-card-response-wrapper collapsed" onclick="event.stopPropagation(); this.classList.toggle('collapsed')"><div class="response-label">Claude Response ▾</div><div class="task-card-response">${escapeHtml(task.last_response).replace(/\n/g, '<br>')}</div></div>`
     : '';
 
+  // Auto-review badge (shown on review column cards)
+  let reviewBadgeHtml = '';
+  if (column === 'review' && task.review_status) {
+    if (task.review_status === 'pending') {
+      reviewBadgeHtml = `<div class="review-badge pending">AI Review…</div>`;
+    } else if (task.review_status === 'approved') {
+      reviewBadgeHtml = `<div class="review-badge approved" title="${escapeAttr(task.review_notes || '')}">✅ Approved</div>`;
+    } else if (task.review_status === 'changes_requested') {
+      reviewBadgeHtml = `<div class="review-badge changes" onclick="event.stopPropagation(); this.nextElementSibling?.classList.toggle('hidden')" title="Click to expand">🔁 Changes needed</div><div class="review-notes hidden">${escapeHtml(task.review_notes || '').replace(/\n/g, '<br>')}</div>`;
+    } else if (task.review_status === 'error') {
+      reviewBadgeHtml = `<div class="review-badge error" title="${escapeAttr(task.review_notes || '')}">⚠️ Review error</div>`;
+    }
+  }
+
   const NO_OP_PHRASES = [
     'already done', 'Already done',
     'уже сделан', 'уже реализован',
@@ -605,6 +642,7 @@ function renderTaskCard(task, column) {
       ${descHtml}
       ${activityHtml}
       ${lastResponseHtml}
+      ${reviewBadgeHtml}
       ${projectTag}
       ${blockedByHtml}
       ${subtaskHtml}
@@ -1395,6 +1433,35 @@ async function fetchAutoQueue() {
   } catch {}
 }
 
+async function fetchAutoReview() {
+  try {
+    const res = await fetch('/api/auto-review');
+    const data = await res.json();
+    autoReviewEnabled = data.enabled;
+    updateAutoReviewBtn();
+  } catch {}
+}
+
+async function toggleAutoReview() {
+  try {
+    const res = await fetch('/api/auto-review', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: !autoReviewEnabled }),
+    });
+    const data = await res.json();
+    autoReviewEnabled = data.enabled;
+    updateAutoReviewBtn();
+  } catch {}
+}
+
+function updateAutoReviewBtn() {
+  const btn = document.getElementById('auto-review-btn');
+  if (btn) btn.classList.toggle('active', autoReviewEnabled);
+  const label = document.getElementById('auto-review-label');
+  if (label) label.textContent = `AI Review: ${autoReviewEnabled ? 'ON' : 'OFF'}`;
+}
+
 // --- Logs ---
 
 var logEntries = [];
@@ -1741,6 +1808,7 @@ document.addEventListener('DOMContentLoaded', () => {
   fetchTasks();
   fetchAutoApprove();
   fetchAutoQueue(); // BUG-05: sync auto-queue state on page load
+  fetchAutoReview();
   fetchResponseLanguage();
   connectWS();
   initSortable();

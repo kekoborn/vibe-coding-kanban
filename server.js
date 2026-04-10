@@ -5,6 +5,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const pty = require('@lydell/node-pty');
 const db = require('./db');
+const { runAutoReview } = require('./auto-review');
 const multer = require('multer');
 const crypto = require('crypto');
 
@@ -63,6 +64,7 @@ const TASK_START_DELAY = 4000; // delay before sending next task prompt (let Cla
 const MAX_CONCURRENT_TASKS = 5; // max tasks running simultaneously (0 = unlimited)
 let autoApproveEnabled = db.getSetting('autoApproveEnabled', 'false') === 'true';
 let autoQueueEnabled = db.getSetting('autoQueueEnabled', 'false') === 'true';
+let autoReviewEnabled = db.getSetting('autoReviewEnabled', 'false') === 'true';
 
 // Rate-limited terminals — termIds currently blocked by API rate limit
 const rateLimitedTerms = new Set();
@@ -212,6 +214,19 @@ app.post('/api/auto-queue', (req, res) => {
 
 app.get('/api/auto-queue', (req, res) => {
   res.json({ enabled: autoQueueEnabled });
+});
+
+// Auto-review toggle
+app.post('/api/auto-review', (req, res) => {
+  autoReviewEnabled = !!req.body.enabled;
+  db.setSetting('autoReviewEnabled', autoReviewEnabled);
+  console.log(`[AutoReview] ${autoReviewEnabled ? 'ENABLED' : 'DISABLED'}`);
+  broadcast({ type: 'settings:autoReview', enabled: autoReviewEnabled });
+  res.json({ ok: true, enabled: autoReviewEnabled });
+});
+
+app.get('/api/auto-review', (req, res) => {
+  res.json({ enabled: autoReviewEnabled });
 });
 
 
@@ -621,6 +636,29 @@ function completeTaskFromServer(taskId, termId) {
     project_path: full.project_path,
   });
   console.log(`[Complete] Task #${taskId} moved to review (idle detection)`);
+
+  // Trigger auto-review if enabled
+  if (autoReviewEnabled) {
+    db.setReviewResult(taskId, 'pending', '');
+    broadcast({ type: 'task:review-started', taskId });
+    runAutoReview({ task: full, lastResponse })
+      .then(result => {
+        db.setReviewResult(taskId, result.status, result.notes);
+        broadcast({ type: 'task:review-result', taskId, status: result.status, notes: result.notes });
+        if (result.status === 'approved') {
+          const done = db.moveTask({ id: taskId, column: 'done' });
+          broadcast({ type: 'task:moved', task: db.getTaskById(taskId) });
+          console.log(`[AutoReview] Task #${taskId} auto-approved → done`);
+        } else {
+          console.log(`[AutoReview] Task #${taskId} needs changes → stays in review`);
+        }
+      })
+      .catch(err => {
+        console.error(`[AutoReview] Task #${taskId} error:`, err.message);
+        broadcast({ type: 'task:review-result', taskId, status: 'error', notes: err.message });
+      });
+  }
+
   setTimeout(triggerServerAutoQueue, 1000);
 }
 
