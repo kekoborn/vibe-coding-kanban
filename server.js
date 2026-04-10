@@ -82,6 +82,28 @@ function stripAnsi(str) {
     .replace(/\x1b[>=<]/g, '');
 }
 
+// Detect Claude Code tool usage from PTY output for live card activity
+const TOOL_PATTERNS = [
+  { re: /\bBash\s*\(/,      label: () => 'bash' },
+  { re: /\bWrite\s*\(([^)]{1,60})/, label: (m) => 'write: ' + (m[1] || '').trim().split('/').pop() },
+  { re: /\bRead\s*\(([^)]{1,60})/,  label: (m) => 'read: '  + (m[1] || '').trim().split('/').pop() },
+  { re: /\bEdit\s*\(([^)]{1,60})/,  label: (m) => 'edit: '  + (m[1] || '').trim().split('/').pop() },
+  { re: /\bGlob\s*\(/,      label: () => 'glob' },
+  { re: /\bGrep\s*\(/,      label: () => 'grep' },
+  { re: /\bWebSearch\s*\(/, label: () => 'web search' },
+  { re: /\bWebFetch\s*\(/,  label: () => 'web fetch' },
+  { re: /\bAgent\s*\(/,     label: () => 'agent' },
+  { re: /\bTodoWrite\s*\(/, label: () => 'todo' },
+];
+
+function detectTool(text) {
+  for (const { re, label } of TOOL_PATTERNS) {
+    const m = text.match(re);
+    if (m) return label(m);
+  }
+  return null;
+}
+
 function updateCaffeinate() {
   const inProgress = db.getTasksByColumn('in_progress');
   const backlog = autoQueueEnabled ? db.getTasksByColumn('backlog') : [];
@@ -1289,9 +1311,19 @@ function spawnShell(ws, termId, opts = {}) {
 
     // Store stripped output for last_response capture
     let buf = termOutputBuffers.get(termId) || '';
-    buf += stripAnsi(data);
+    const stripped = stripAnsi(data);
+    buf += stripped;
     if (buf.length > 10000) buf = buf.slice(-8000);
     termOutputBuffers.set(termId, buf);
+
+    // Live activity: detect tool usage and broadcast to card
+    const taskEntry = termTaskMap.get(termId);
+    if (taskEntry?.taskId) {
+      const tool = detectTool(stripped);
+      if (tool) {
+        broadcast({ type: 'task:activity', taskId: taskEntry.taskId, tool });
+      }
+    }
 
     ptyState.outputBuffer += data;
     if (ptyState.outputBuffer.length > 5000) {

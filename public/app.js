@@ -1,6 +1,7 @@
 // --- State ---
 let tasks = [];
 let sessionStatuses = {}; // taskId -> { status, resetTime }
+const liveActivity = new Map(); // taskId -> current tool string
 let ws = null;
 let autoQueueEnabled = false;
 let autoApproveEnabled = false;
@@ -207,11 +208,29 @@ function handleWSMessage(msg) {
       renderBoard();
       break;
 
+    case 'task:activity': {
+      liveActivity.set(msg.taskId, msg.tool);
+      // Patch just the activity label in-place — no full re-render
+      const actEl = document.querySelector(`.task-card[data-id="${msg.taskId}"] .activity-label`);
+      if (actEl) {
+        actEl.textContent = 'Running: ' + msg.tool;
+      } else {
+        // Card doesn't have the line yet (first tool event) — do a targeted card re-render
+        const cardEl = document.querySelector(`.task-card[data-id="${msg.taskId}"]`);
+        if (cardEl) {
+          const task = tasks.find(t => t.id === msg.taskId);
+          if (task) cardEl.outerHTML = renderTaskCard(task, task.column);
+        }
+      }
+      break;
+    }
+
     case 'task:stop':
       if (window.terminalManager) {
         window.terminalManager.stopTaskInProject(msg.taskId, msg.projectPath);
       }
       delete sessionStatuses[msg.taskId];
+      liveActivity.delete(msg.taskId);
       renderBoard();
       break;
 
@@ -239,6 +258,7 @@ function handleWSMessage(msg) {
       const t = tasks.find(t => t.id === msg.taskId);
       addLog(`[Complete] Task #${msg.taskId} "${t?.title || ''}" → review`, 'complete');
       sessionStatuses[msg.taskId] = { status: 'completed' };
+      liveActivity.delete(msg.taskId);
       renderBoard();
       if (window.terminalManager) {
         window.terminalManager.onTaskCompleted(msg.taskId);
@@ -466,6 +486,8 @@ function renderTaskCard(task, column) {
     `;
   }
 
+  const ticketId = `<span class="ticket-id">TASK-${task.id}</span>`;
+
   let statusBadge = '';
   if (status?.status === 'running') {
     statusBadge = '<div class="status-badge running" title="Running"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="2"><animateTransform attributeName="transform" type="rotate" from="0 8 8" to="360 8 8" dur="1s" repeatCount="indefinite"/></circle><path d="M8 3v5l3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>';
@@ -473,6 +495,14 @@ function renderTaskCard(task, column) {
     const resetTime = status.resetTime ? new Date(status.resetTime).toLocaleTimeString() : '...';
     statusBadge = `<div class="status-badge rate-limited" title="Rate limited — ${resetTime}"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 2.5a1 1 0 011 1v3.25l2.13 1.28a1 1 0 01-1.03 1.72L7.5 8.75V4.5a1 1 0 011-1z"/></svg></div>`;
   }
+
+  // Live activity line (shown when agent is running and a tool was detected)
+  const activityTool = liveActivity.get(task.id);
+  const activityHtml = isRunning && activityTool
+    ? `<div class="task-live-activity"><span class="activity-dot"></span><span class="activity-label">Running: ${escapeHtml(activityTool)}</span></div>`
+    : isRunning
+    ? `<div class="task-live-activity"><span class="activity-dot"></span><span class="activity-label">Starting…</span></div>`
+    : '';
 
   const priorityBadge = `<span class="priority-badge ${priority}">${PRIORITY_LABELS[priority]}</span>`;
 
@@ -550,10 +580,13 @@ function renderTaskCard(task, column) {
 
   return `
     <div class="task-card" data-id="${task.id}" data-priority="${priority}"${statusAttr} onclick="openEditModal(${task.id})">
-      ${statusBadge}
-      ${priorityBadge}
+      <div class="task-card-header">
+        ${ticketId}
+        <div class="task-card-header-right">${statusBadge}${priorityBadge}</div>
+      </div>
       <div class="task-card-title">${escapeHtml(task.title)}${noOpBadge}</div>
       ${descHtml}
+      ${activityHtml}
       ${lastResponseHtml}
       ${projectTag}
       ${blockedByHtml}
@@ -1269,9 +1302,10 @@ async function toggleAutoApprove() {
 function updateAutoApproveBtn() {
   const btn = document.getElementById('auto-approve-btn');
   if (btn) {
-    btn.textContent = `Auto-approve: ${autoApproveEnabled ? 'ON' : 'OFF'}`;
     btn.classList.toggle('active', autoApproveEnabled);
   }
+  const label = document.getElementById('auto-approve-label');
+  if (label) label.textContent = `Auto-approve: ${autoApproveEnabled ? 'ON' : 'OFF'}`;
 }
 
 // --- Response Language ---
@@ -1538,10 +1572,10 @@ function updateStartBtn() {
   const btn = document.getElementById('start-btn');
   if (btn) {
     if (autoQueueEnabled) {
-      btn.innerHTML = '&#9632; Stop queue';
+      btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Stop queue`;
       btn.classList.add('active');
     } else {
-      btn.innerHTML = '&#9654; Start queue';
+      btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg> Start queue`;
       btn.classList.remove('active');
     }
   }

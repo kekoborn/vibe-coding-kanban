@@ -11,73 +11,122 @@
 <body>
   <script>
     (function() {
-      var t = localStorage.getItem('theme') || 'dark';
-      if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+      var t = localStorage.getItem('theme') || 'light';
+      if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
       document.addEventListener('DOMContentLoaded', function() {
         var btn = document.getElementById('theme-toggle');
-        if (btn) btn.innerHTML = t === 'light' ? '<span class="btn-theme-icon">&#9728;</span> Light' : '<span class="btn-theme-icon">&#9790;</span> Dark';
+        if (btn) btn.innerHTML = t === 'dark' ? '<span class="btn-theme-icon">&#9790;</span> Dark' : '<span class="btn-theme-icon">&#9728;</span> Light';
       });
     })();
     function toggleTheme() {
-      var isLight = document.documentElement.getAttribute('data-theme') === 'light';
-      var next = isLight ? 'dark' : 'light';
-      if (next === 'light') {
-        document.documentElement.setAttribute('data-theme', 'light');
+      var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+      var next = isDark ? 'light' : 'dark';
+      if (next === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
       } else {
         document.documentElement.removeAttribute('data-theme');
       }
       localStorage.setItem('theme', next);
-      document.getElementById('theme-toggle').innerHTML = next === 'light' ? '<span class="btn-theme-icon">&#9728;</span> Light' : '<span class="btn-theme-icon">&#9790;</span> Dark';
+      document.getElementById('theme-toggle').innerHTML = next === 'dark' ? '<span class="btn-theme-icon">&#9790;</span> Dark' : '<span class="btn-theme-icon">&#9728;</span> Light';
       if (typeof updateAllTerminalThemes === 'function') updateAllTerminalThemes();
     }
   </script>
-  <header>
-    <h1>🤖 Vibe coding Kanban</h1>
-    <div class="header-filters">
-      <div class="search-wrapper">
-        <span class="search-icon">🔍</span>
-        <input type="text" id="filter-search" placeholder="Search tasks..." class="filter-input" oninput="applyFilters()">
+
+  <div class="app-shell">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="28" height="28" rx="6" fill="#D97706"/>
+          <rect x="6" y="8" width="16" height="2.5" rx="1.25" fill="white"/>
+          <rect x="6" y="12.75" width="11" height="2.5" rx="1.25" fill="white"/>
+          <rect x="6" y="17.5" width="14" height="2.5" rx="1.25" fill="white"/>
+        </svg>
+        <div class="sidebar-logo-text">
+          <span class="sidebar-brand">Claude Kanban</span>
+          <span class="sidebar-tagline">Agent workspace</span>
+        </div>
       </div>
-      <select id="filter-priority" class="filter-select" onchange="applyFilters()">
-        <option value="">All priorities</option>
-        <option value="high">High</option>
-        <option value="medium">Medium</option>
-        <option value="low">Low</option>
-        <option value="hold">Hold</option>
-      </select>
-      <select id="filter-project" class="filter-select" onchange="applyFilters()">
-        <option value="">All projects</option>
-      </select>
-    </div>
-    <div class="header-actions">
-      <div class="header-group">
-        <button id="theme-toggle" class="btn btn-theme-pill" onclick="toggleTheme()" title="Toggle light/dark theme"><span class="btn-theme-icon">&#9790;</span> Dark</button>
-<a href="/analytics.html" class="btn btn-logs" title="Daily analytics report" style="text-decoration:none">Analytics</a>
+
+      <nav class="sidebar-nav">
+        <a class="sidebar-nav-item active" href="/" title="Kanban Board">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="18"/><rect x="14" y="3" width="7" height="10"/><rect x="14" y="17" width="7" height="4"/></svg>
+          Board
+        </a>
+        <a class="sidebar-nav-item" href="/analytics.html" title="Analytics">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          Analytics
+        </a>
+        <div class="sidebar-section-label">Agent Controls</div>
+        <button class="sidebar-nav-item sidebar-btn" id="auto-approve-btn" onclick="toggleAutoApprove()" title="Auto-approve Claude Code permission prompts">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <span id="auto-approve-label">Auto-approve: OFF</span>
+        </button>
+        <button class="sidebar-nav-item sidebar-btn" id="start-btn" onclick="toggleStart()" title="Start all backlog tasks">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Start queue
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button id="theme-toggle" class="sidebar-nav-item sidebar-btn" onclick="toggleTheme()" title="Toggle theme">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          <span class="btn-theme-icon-label">Light</span>
+        </button>
       </div>
-      <div class="header-group">
-        <button id="auto-approve-btn" class="btn btn-auto-queue" onclick="toggleAutoApprove()" title="Auto-approve Claude Code permission prompts">Auto-approve: OFF</button>
-        <button id="start-btn" class="btn btn-auto-queue" onclick="toggleStart()" title="Start all backlog tasks with auto-queue">&#9654; Start queue</button>
-        <select id="response-language-select" class="select-language" title="Claude response language" onchange="setResponseLanguage(this.value)">
-          <option value="">🌐 Auto</option>
-          <option value="Russian">Russian</option>
-          <option value="English">English</option>
-          <option value="Spanish">Spanish</option>
-          <option value="Chinese">Chinese</option>
-          <option value="German">German</option>
-          <option value="French">French</option>
-          <option value="Japanese">Japanese</option>
-          <option value="Korean">Korean</option>
-        </select>
-      </div>
-      <button id="add-task-btn" class="btn btn-primary">+ New Task</button>
-    </div>
-  </header>
+    </aside>
+
+    <!-- Main content -->
+    <div class="app-main">
+      <header>
+        <div class="header-left">
+          <div>
+            <h1>Development Board</h1>
+            <p class="board-subtitle">Claude Code — Drag tickets to "In Progress" to start an agent</p>
+          </div>
+        </div>
+        <div class="header-filters">
+          <div class="search-wrapper">
+            <svg class="search-icon-svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="filter-search" placeholder="Search tasks, sessions, or IDs..." class="filter-input" oninput="applyFilters()">
+          </div>
+          <select id="filter-priority" class="filter-select" onchange="applyFilters()">
+            <option value="">All priorities</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+            <option value="hold">Hold</option>
+          </select>
+          <select id="filter-project" class="filter-select" onchange="applyFilters()">
+            <option value="">All projects</option>
+          </select>
+        </div>
+        <div class="header-actions">
+          <select id="response-language-select" class="select-language" title="Claude response language" onchange="setResponseLanguage(this.value)">
+            <option value="">🌐 Auto</option>
+            <option value="Russian">Russian</option>
+            <option value="English">English</option>
+            <option value="Spanish">Spanish</option>
+            <option value="Chinese">Chinese</option>
+            <option value="German">German</option>
+            <option value="French">French</option>
+            <option value="Japanese">Japanese</option>
+            <option value="Korean">Korean</option>
+          </select>
+          <div class="agents-online" id="agents-online-badge">
+            <span class="agents-dot"></span>
+            Agents Online
+          </div>
+          <button id="add-task-btn" class="btn btn-primary">+ New Task</button>
+        </div>
+      </header>
 
   <main>
     <!-- Kanban Board -->
     <div id="kanban">
       <div class="column" data-column="backlog">
         <div class="column-header">
+          <span class="column-dot"></span>
           <span class="column-title">Backlog</span>
           <span class="column-count">0</span>
           <button class="column-collapse-btn" onclick="toggleColumn('backlog')" title="Collapse/expand">‹</button>
@@ -87,6 +136,7 @@
       </div>
       <div class="column" data-column="in_progress">
         <div class="column-header">
+          <span class="column-dot"></span>
           <span class="column-title">In Progress</span>
           <span class="column-count">0</span>
           <button class="column-collapse-btn" onclick="toggleColumn('in_progress')" title="Collapse/expand">‹</button>
@@ -96,6 +146,7 @@
       </div>
       <div class="column" data-column="review">
         <div class="column-header">
+          <span class="column-dot"></span>
           <span class="column-title">Review</span>
           <span class="column-count">0</span>
           <button id="approve-all-btn" class="approve-all-btn" onclick="approveAllReview()" title="Move all review tasks to done" style="display:none">✓ All</button>
@@ -106,6 +157,7 @@
       </div>
       <div class="column" data-column="done">
         <div class="column-header">
+          <span class="column-dot"></span>
           <span class="column-title">Done</span>
           <span class="column-count">0</span>
           <button class="column-collapse-btn" onclick="toggleColumn('done')" title="Collapse/expand">‹</button>
@@ -296,5 +348,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-unicode11@0.8.0/lib/addon-unicode11.min.js"></script>
   <script src="app.js"></script>
   <script src="terminal.js"></script>
+    </div><!-- /.app-main -->
+  </div><!-- /.app-shell -->
 </body>
 </html>
