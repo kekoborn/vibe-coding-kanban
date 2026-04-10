@@ -2,164 +2,421 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Kanban Analytics</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <title>Analytics — Claude Kanban</title>
+  <link rel="stylesheet" href="styles.css">
+  <script>
+    (function() {
+      var t = localStorage.getItem('theme') || 'light';
+      if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+    })();
+  </script>
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    :root {
-      --bg: #0d1117;
-      --bg2: #161b22;
-      --bg3: #21262d;
-      --border: #30363d;
-      --text: #e6edf3;
-      --text2: #8b949e;
-      --text3: #6e7681;
-      --accent: #58a6ff;
-      --green: #3fb950;
-      --yellow: #d29922;
-      --red: #f85149;
-      --purple: #bc8cff;
-      --orange: #ffa657;
+    /* Analytics-specific styles using CSS variables from styles.css */
+    .analytics-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 28px 32px;
     }
 
-    body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; font-size: 14px; line-height: 1.5; }
+    .analytics-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
 
-    .page { max-width: 1100px; margin: 0 auto; padding: 32px 24px; }
+    .analytics-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text);
+    }
 
-    /* Header */
-    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
-    .header-left { display: flex; align-items: center; gap: 16px; }
-    .header h1 { font-size: 20px; font-weight: 600; }
-    .back-link { color: var(--text2); text-decoration: none; font-size: 13px; }
-    .back-link:hover { color: var(--accent); }
-    .date-nav { display: flex; align-items: center; gap: 8px; }
-    .date-nav button { background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; }
-    .date-nav button:hover { border-color: var(--accent); color: var(--accent); }
-    .date-nav input[type=date] { background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 5px 10px; border-radius: 6px; font-size: 13px; font-family: inherit; }
-    #today-btn { background: var(--accent); color: #0d1117; border-color: var(--accent); font-weight: 500; }
+    .date-nav {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
 
-    /* Summary row */
-    .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 28px; }
-    .stat-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
-    .stat-card.problem { border-color: var(--red); }
-    .stat-value { font-size: 28px; font-weight: 700; line-height: 1; }
-    .stat-value.green { color: var(--green); }
-    .stat-value.yellow { color: var(--yellow); }
-    .stat-value.red { color: var(--red); }
-    .stat-value.purple { color: var(--purple); }
-    .stat-value.blue { color: var(--accent); }
-    .stat-label { font-size: 12px; color: var(--text2); margin-top: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .date-nav button {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 5px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-family: inherit;
+      transition: border-color 0.15s, color 0.15s;
+    }
+
+    .date-nav button:hover {
+      border-color: var(--primary);
+      color: var(--primary);
+    }
+
+    .date-nav input[type=date] {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: inherit;
+    }
+
+    #today-btn {
+      background: var(--primary);
+      color: #fff;
+      border-color: var(--primary);
+      font-weight: 500;
+    }
+
+    #today-btn:hover {
+      background: var(--primary-hover);
+      border-color: var(--primary-hover);
+      color: #fff;
+    }
+
+    /* Summary cards */
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 10px;
+      margin-bottom: 28px;
+    }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      box-shadow: var(--card-shadow);
+    }
+
+    .stat-card.problem {
+      border-color: var(--danger);
+      background: color-mix(in srgb, var(--danger) 5%, var(--surface));
+    }
+
+    .stat-value {
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1;
+      color: var(--text);
+    }
+
+    .stat-value.green  { color: var(--success); }
+    .stat-value.yellow { color: var(--warning); }
+    .stat-value.red    { color: var(--danger); }
+    .stat-value.purple { color: #7c3aed; }
+    .stat-value.blue   { color: var(--primary); }
+
+    .stat-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 600;
+    }
 
     /* Sections */
-    .section { margin-bottom: 32px; }
-    .section-title { font-size: 15px; font-weight: 600; margin-bottom: 12px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.05em; }
+    .section { margin-bottom: 28px; }
+
+    .section-title {
+      font-size: 11px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
 
     /* Task table */
-    .task-table { width: 100%; border-collapse: collapse; }
-    .task-table th { text-align: left; padding: 8px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text3); border-bottom: 1px solid var(--border); font-weight: 500; }
-    .task-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-    .task-table tr:last-child td { border-bottom: none; }
-    .task-table tr:hover td { background: var(--bg3); }
-    .task-table tbody { background: var(--bg2); border-radius: 8px; overflow: hidden; }
-    .task-table-wrap { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .task-table-wrap {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: var(--card-shadow);
+    }
 
-    .task-title { font-weight: 500; font-size: 13px; max-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .task-project { font-size: 11px; color: var(--text3); font-family: monospace; max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .task-row.flagged td:first-child { border-left: 3px solid var(--red); }
-    .task-row.returned td:first-child { border-left: 3px solid var(--yellow); }
+    .task-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+    }
+
+    .task-table th {
+      text-align: left;
+      padding: 8px 12px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+      background: var(--surface-hover);
+    }
+
+    .task-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+      font-size: 13px;
+    }
+
+    .task-table tr:last-child td { border-bottom: none; }
+
+    .task-table tr:hover td {
+      background: var(--surface-hover);
+    }
+
+    .task-title {
+      font-weight: 500;
+      font-size: 13px;
+      max-width: 260px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--text);
+    }
+
+    .task-project {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: monospace;
+      max-width: 140px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .task-row.flagged td:first-child { border-left: 3px solid var(--danger); }
+    .task-row.returned td:first-child { border-left: 3px solid var(--warning); }
 
     /* Badges */
-    .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 500; white-space: nowrap; }
-    .badge-prompt { background: rgba(63,185,80,.15); color: var(--green); }
-    .badge-idle { background: rgba(210,153,34,.15); color: var(--yellow); }
-    .badge-exit { background: rgba(248,81,73,.15); color: var(--red); }
-    .badge-none { background: var(--bg3); color: var(--text3); }
-    .badge-high { background: rgba(248,81,73,.15); color: var(--red); }
-    .badge-medium { background: rgba(210,153,34,.15); color: var(--yellow); }
-    .badge-low { background: rgba(63,185,80,.15); color: var(--green); }
-    .badge-hold { background: rgba(139,148,158,.15); color: var(--text2); }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .badge-prompt { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); }
+    .badge-idle   { background: color-mix(in srgb, var(--warning) 15%, transparent); color: var(--warning); }
+    .badge-exit   { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); }
+    .badge-none   { background: var(--surface-hover); color: var(--text-muted); }
+    .badge-high   { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+    .badge-medium { background: color-mix(in srgb, var(--warning) 12%, transparent); color: var(--warning); }
+    .badge-low    { background: color-mix(in srgb, var(--success) 12%, transparent); color: var(--success); }
+    .badge-hold   { background: var(--surface-hover); color: var(--text-muted); }
 
     /* Flags */
     .flags { display: flex; gap: 4px; flex-wrap: wrap; }
-    .flag { display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; }
-    .flag-slow { background: rgba(255,166,87,.15); color: var(--orange); }
-    .flag-short_idle { background: rgba(248,81,73,.15); color: var(--red); }
-    .flag-multi_return { background: rgba(210,153,34,.15); color: var(--yellow); }
-    .flag-crashed { background: rgba(248,81,73,.2); color: var(--red); border: 1px solid var(--red); }
 
-    /* Events timeline */
-    .events-list { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-    .event-item { display: flex; align-items: flex-start; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+    .flag {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    .flag-slow        { background: color-mix(in srgb, var(--warning) 12%, transparent); color: var(--warning); }
+    .flag-short_idle  { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+    .flag-multi_return{ background: color-mix(in srgb, var(--warning) 12%, transparent); color: var(--warning); }
+    .flag-crashed     { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); border: 1px solid var(--danger); }
+
+    /* Events */
+    .events-list {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: var(--card-shadow);
+    }
+
+    .event-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
     .event-item:last-child { border-bottom: none; }
-    .event-time { font-size: 11px; color: var(--text3); font-family: monospace; white-space: nowrap; min-width: 52px; padding-top: 2px; }
-    .event-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 5px; }
-    .event-dot.started { background: var(--accent); }
-    .event-dot.completed { background: var(--green); }
-    .event-dot.returned { background: var(--yellow); }
-    .event-dot.rate_limited { background: var(--red); }
-    .event-dot.rate_limit_resolved { background: var(--green); }
-    .event-dot.auto_approved { background: var(--purple); }
-    .event-dot.compact { background: var(--text3); }
-    .event-dot.stuck_reset { background: var(--orange); }
-    .event-dot.process_exit { background: var(--red); }
-    .event-dot.created { background: var(--text3); }
-    .event-body { flex: 1; min-width: 0; }
-    .event-type { font-size: 12px; font-weight: 500; }
-    .event-detail { font-size: 12px; color: var(--text2); margin-top: 2px; }
-    .event-task { font-size: 11px; color: var(--text3); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-    /* Rate limit section */
-    .rl-item { background: var(--bg2); border: 1px solid var(--border); border-left: 3px solid var(--red); border-radius: 8px; padding: 12px 16px; margin-bottom: 8px; display: flex; gap: 24px; flex-wrap: wrap; }
+    .event-item:hover { background: var(--surface-hover); }
+
+    .event-time {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: monospace;
+      white-space: nowrap;
+      min-width: 52px;
+      padding-top: 2px;
+    }
+
+    .event-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      margin-top: 5px;
+    }
+
+    .event-dot.started           { background: var(--primary); }
+    .event-dot.completed         { background: var(--success); }
+    .event-dot.returned          { background: var(--warning); }
+    .event-dot.rate_limited      { background: var(--danger); }
+    .event-dot.rate_limit_resolved { background: var(--success); }
+    .event-dot.auto_approved     { background: #7c3aed; }
+    .event-dot.compact           { background: var(--text-muted); }
+    .event-dot.stuck_reset       { background: var(--warning); }
+    .event-dot.process_exit      { background: var(--danger); }
+    .event-dot.created           { background: var(--text-muted); }
+
+    .event-body { flex: 1; min-width: 0; }
+    .event-type { font-size: 12px; font-weight: 500; color: var(--text); }
+    .event-detail { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+    .event-task { font-size: 11px; color: var(--text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Rate limits */
+    .rl-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--danger);
+      border-radius: 10px;
+      padding: 12px 16px;
+      margin-bottom: 8px;
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+      box-shadow: var(--card-shadow);
+    }
+
     .rl-field { font-size: 12px; }
-    .rl-label { color: var(--text3); margin-bottom: 2px; font-size: 11px; }
+    .rl-label { color: var(--text-muted); margin-bottom: 2px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
     .rl-value { color: var(--text); font-weight: 500; }
 
-    /* Empty state */
-    .empty { text-align: center; padding: 40px; color: var(--text3); font-size: 13px; }
-
-    /* Time */
-    .time-val { font-family: monospace; font-size: 13px; }
-    .time-val.fast { color: var(--green); }
-    .time-val.ok { color: var(--text); }
-    .time-val.slow { color: var(--yellow); }
-    .time-val.very-slow { color: var(--red); }
-
-    /* Spinner */
-    .loading { text-align: center; padding: 60px; color: var(--text3); }
-
-    /* Tabs for event filter */
+    /* Event filters */
     .event-filters { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
-    .event-filter { background: var(--bg3); border: 1px solid var(--border); color: var(--text2); padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; }
-    .event-filter.active { background: var(--accent); color: #0d1117; border-color: var(--accent); font-weight: 500; }
+
+    .event-filter {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.12s;
+    }
+
+    .event-filter:hover { border-color: var(--primary); color: var(--primary); }
+    .event-filter.active { background: var(--primary); color: #fff; border-color: var(--primary); font-weight: 500; }
+
+    /* Utils */
+    .empty { text-align: center; padding: 32px; color: var(--text-muted); font-size: 13px; }
+    .loading { text-align: center; padding: 60px; color: var(--text-muted); font-size: 13px; }
+    .time-val { font-family: monospace; font-size: 13px; }
+    .time-val.fast      { color: var(--success); }
+    .time-val.ok        { color: var(--text); }
+    .time-val.slow      { color: var(--warning); }
+    .time-val.very-slow { color: var(--danger); }
 
     @media (max-width: 640px) {
       .summary { grid-template-columns: repeat(2, 1fr); }
       .task-table th:nth-child(n+4), .task-table td:nth-child(n+4) { display: none; }
+      .analytics-content { padding: 16px; }
     }
   </style>
 </head>
 <body>
-<div class="page">
+<div class="app-shell">
 
-  <div class="header">
-    <div class="header-left">
-      <a href="/" class="back-link">← Kanban</a>
-      <h1>Analytics</h1>
+  <!-- Sidebar (same as index.html) -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+        <rect width="28" height="28" rx="7" fill="#d97706"/>
+        <rect x="6" y="7" width="16" height="3" rx="1.5" fill="white"/>
+        <rect x="6" y="13" width="11" height="3" rx="1.5" fill="white" opacity="0.8"/>
+        <rect x="6" y="19" width="13" height="3" rx="1.5" fill="white" opacity="0.6"/>
+      </svg>
+      <div class="sidebar-logo-text">
+        <span class="sidebar-brand">Claude Kanban</span>
+        <span class="sidebar-sub">Agent workspace</span>
+      </div>
     </div>
-    <div class="date-nav">
-      <button id="prev-btn">‹</button>
-      <input type="date" id="date-input">
-      <button id="next-btn">›</button>
-      <button id="today-btn">Today</button>
+
+    <nav class="sidebar-nav">
+      <a class="sidebar-nav-item" href="/" title="Board">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        Board
+      </a>
+      <a class="sidebar-nav-item active" href="/analytics.html" title="Analytics">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        Analytics
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <button id="theme-toggle" class="sidebar-nav-item sidebar-btn" onclick="toggleTheme()" title="Toggle theme">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        <span id="theme-label">Light</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- Main analytics area -->
+  <div class="app-main">
+    <div class="analytics-content">
+      <div class="analytics-header">
+        <div class="analytics-title">Analytics</div>
+        <div class="date-nav">
+          <button id="prev-btn">‹</button>
+          <input type="date" id="date-input">
+          <button id="next-btn">›</button>
+          <button id="today-btn">Today</button>
+        </div>
+      </div>
+
+      <div id="root"><div class="loading">Loading…</div></div>
     </div>
   </div>
-
-  <div id="root"><div class="loading">Loading…</div></div>
 
 </div>
 
 <script>
+  function toggleTheme() {
+    var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    var next = isDark ? 'light' : 'dark';
+    localStorage.setItem('theme', next);
+    if (next === 'dark') {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+    var lbl = document.getElementById('theme-label');
+    if (lbl) lbl.textContent = next === 'dark' ? 'Dark' : 'Light';
+  }
+
+  // Init theme label
+  (function() {
+    var t = document.documentElement.getAttribute('data-theme');
+    var lbl = document.getElementById('theme-label');
+    if (lbl) lbl.textContent = (t === 'dark') ? 'Dark' : 'Light';
+  })();
+
   let currentDate = new Date().toISOString().slice(0, 10);
   let allEvents = [];
   let eventFilter = 'all';
@@ -234,9 +491,7 @@
     return flags.map(f => `<span class="flag flag-${f}">${labels[f] || f}</span>`).join('');
   }
 
-  function eventDotType(type) {
-    return type || 'created';
-  }
+  function eventDotType(type) { return type || 'created'; }
 
   function eventLabel(e) {
     const data = typeof e.data === 'string' ? JSON.parse(e.data || '{}') : (e.data || {});
@@ -245,7 +500,7 @@
       started: `Started${data.queue_seconds != null ? ` (queued ${fmtSeconds(data.queue_seconds)})` : ''}`,
       completed: `Completed — ${data.completion_type || '?'}, response ${data.response_length || 0} chars, ${fmtSeconds(data.execution_seconds)}`,
       returned: `Returned to queue (return #${data.return_count || '?'})`,
-      rate_limited: `Rate limit — wait ${data.wait_minutes || '?'}min (reset ${data.reset_time ? fmtTime(data.reset_time) : '?'})`,
+      rate_limited: `Rate limit — wait ${data.wait_minutes || '?'}min`,
       rate_limit_resolved: `Rate limit resolved`,
       auto_approved: `Auto-approved (${data.source || '?'})`,
       compact: `/compact sent after ${data.task_count || '?'} tasks`,
@@ -286,14 +541,13 @@
       const data = await res.json();
       render(data);
     } catch (err) {
-      document.getElementById('root').innerHTML = `<div class="empty">Error: ${err.message}</div>`;
+      document.getElementById('root').innerHTML = `<div class="empty">Error: ${escHtml(err.message)}</div>`;
     }
   }
 
   function render(data) {
     const s = data.summary;
     allEvents = data.events || [];
-
     const avgExec = s.avg_execution_seconds != null ? fmtSeconds(s.avg_execution_seconds) : '—';
 
     const summaryHtml = `
@@ -308,13 +562,13 @@
         </div>
         <div class="stat-card">
           <div class="stat-value">${avgExec}</div>
-          <div class="stat-label">Avg exec time</div>
+          <div class="stat-label">Avg exec</div>
         </div>
         <div class="stat-card ${s.rate_limit_count > 0 ? 'problem' : ''}">
           <div class="stat-value ${s.rate_limit_count > 0 ? 'red' : ''}">${s.rate_limit_count}</div>
           <div class="stat-label">Rate limits</div>
         </div>
-        <div class="stat-card ${s.tasks_returned > 0 ? '' : ''}">
+        <div class="stat-card">
           <div class="stat-value ${s.tasks_returned > 0 ? 'yellow' : ''}">${s.tasks_returned}</div>
           <div class="stat-label">Returned</div>
         </div>
@@ -328,7 +582,6 @@
         </div>
       </div>`;
 
-    // Task table
     const taskRows = (data.tasks || []).map(t => {
       const rowClass = t.flags.length > 0 ? 'flagged' : (t.return_count > 0 ? 'returned' : '');
       return `<tr class="task-row ${rowClass}">
@@ -340,7 +593,7 @@
         <td><span class="time-val">${fmtSeconds(t.queue_seconds)}</span></td>
         <td><span class="time-val ${timeClass(t.execution_seconds)}">${fmtSeconds(t.execution_seconds)}</span></td>
         <td>${completionBadge(t.completionData?.completion_type)}</td>
-        <td>${t.return_count > 0 ? `<span style="color:var(--yellow);font-weight:600">${t.return_count}</span>` : '—'}</td>
+        <td>${t.return_count > 0 ? `<span style="color:var(--warning);font-weight:600">${t.return_count}</span>` : '—'}</td>
         <td>${t.completionData?.response_length > 0 ? t.completionData.response_length + ' ch' : '—'}</td>
         <td><div class="flags">${flagBadges(t.flags)}</div></td>
       </tr>`;
@@ -350,26 +603,23 @@
       ? '<div class="empty">No tasks on this date</div>'
       : `<div class="task-table-wrap"><table class="task-table">
           <thead><tr>
-            <th>Task</th><th>Priority</th><th>Queued</th><th>Exec time</th><th>Completion</th><th>Returns</th><th>Response</th><th>Flags</th>
+            <th>Task</th><th>Priority</th><th>Queued</th><th>Exec</th><th>Completion</th><th>Returns</th><th>Response</th><th>Flags</th>
           </tr></thead>
           <tbody>${taskRows}</tbody>
         </table></div>`;
 
-    // Rate limits section
     const rlHtml = data.rate_limits.length === 0
-      ? '<div class="empty" style="padding:20px">No rate limits on this date 🎉</div>'
+      ? '<div class="empty">No rate limits today 🎉</div>'
       : data.rate_limits.map(rl => {
           const d = rl.data || {};
           return `<div class="rl-item">
             <div class="rl-field"><div class="rl-label">Time</div><div class="rl-value">${fmtTime(rl.timestamp)}</div></div>
             <div class="rl-field"><div class="rl-label">Wait</div><div class="rl-value">${d.wait_minutes != null ? d.wait_minutes + ' min' : '—'}</div></div>
-            <div class="rl-field"><div class="rl-label">Reset at</div><div class="rl-value">${d.reset_time ? fmtTime(d.reset_time) : '—'}</div></div>
+            <div class="rl-field"><div class="rl-label">Reset</div><div class="rl-value">${d.reset_time ? fmtTime(d.reset_time) : '—'}</div></div>
             <div class="rl-field"><div class="rl-label">Task</div><div class="rl-value">${rl.task_title ? escHtml(rl.task_title) : '—'}</div></div>
-            <div class="rl-field"><div class="rl-label">Terminal</div><div class="rl-value" style="font-family:monospace;font-size:11px">${escHtml(d.term_id || '—')}</div></div>
           </div>`;
         }).join('');
 
-    // Events timeline with filter
     const eventTypes = [...new Set(allEvents.map(e => e.event_type))];
     const filterButtons = ['all', ...EVENT_TYPES_IMPORTANT.filter(t => eventTypes.includes(t)), ...eventTypes.filter(t => !EVENT_TYPES_IMPORTANT.includes(t))]
       .map(t => `<button class="event-filter ${t === eventFilter ? 'active' : ''}" data-type="${t}">${t}</button>`)
@@ -385,9 +635,7 @@
 
       <div class="section">
         <div class="section-title">Rate Limits</div>
-        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;overflow:hidden;">
-          ${rlHtml}
-        </div>
+        ${rlHtml}
       </div>
 
       <div class="section">
