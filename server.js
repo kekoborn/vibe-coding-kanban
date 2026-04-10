@@ -589,13 +589,27 @@ app.get('/api/tasks/:id/status', (req, res) => {
   res.json({ taskId: id, alive, status: alive ? 'running' : 'none' });
 });
 
+// Track which project paths currently have an active auto-review running
+const activeReviews = new Set();
+
 // Shared auto-review trigger — call after any task lands in review column
 function triggerAutoReview(taskId, task, lastResponse = '') {
   if (!autoReviewEnabled) return;
+  const projectPath = task.project_path || '';
+
+  // Don't start a second reviewer for the same project simultaneously
+  if (activeReviews.has(projectPath)) {
+    console.log(`[AutoReview] Skipping task #${taskId} — review already running for ${projectPath}`);
+    return;
+  }
+
+  activeReviews.add(projectPath);
   db.setReviewResult(taskId, 'pending', '');
   broadcast({ type: 'task:review-started', taskId });
+
   runAutoReview({ task, lastResponse })
     .then(result => {
+      activeReviews.delete(projectPath);
       db.setReviewResult(taskId, result.status, result.notes);
       broadcast({ type: 'task:review-result', taskId, status: result.status, notes: result.notes });
       if (result.status === 'approved') {
@@ -609,10 +623,11 @@ function triggerAutoReview(taskId, task, lastResponse = '') {
         db.moveTask({ id: taskId, column: 'backlog' });
         broadcast({ type: 'task:moved', task: db.getTaskById(taskId) });
         console.log(`[AutoReview] Task #${taskId} needs changes → returned to backlog`);
-        setTimeout(triggerServerAutoQueue, 2000);
+        // Don't trigger auto-queue here — the running task will do it on completion
       }
     })
     .catch(err => {
+      activeReviews.delete(projectPath);
       console.error(`[AutoReview] Task #${taskId} error:`, err.message);
       broadcast({ type: 'task:review-result', taskId, status: 'error', notes: err.message });
     });
@@ -680,6 +695,13 @@ function runTaskOnServer(task) {
   const rawPrompt = buildPromptWithAttachments(task);
   const projectPath = task.project_path || process.env.HOME;
   const termId = 'project:' + (task.project_path || 'default');
+
+  // Don't hijack a terminal that's already running another task
+  const termEntry = termTaskMap.get(termId);
+  if (termEntry?.taskId && termEntry.taskId !== task.id) {
+    console.log(`[AutoQueue] Skipping task #${task.id} — terminal ${termId} busy with #${termEntry.taskId}`);
+    return false;
+  }
 
   db.setLastResponse(task.id, '');
   const updated = db.moveTask({ id: task.id, column: 'in_progress' });
