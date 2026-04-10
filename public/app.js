@@ -1385,13 +1385,8 @@ async function setResponseLanguage(value) {
 }
 
 async function fetchAutoApprove() {
-  // Reset to OFF on page load/refresh — never restore previous state
   try {
-    const res = await fetch('/api/auto-approve', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: false }),
-    });
+    const res = await fetch('/api/auto-approve');
     const data = await res.json();
     autoApproveEnabled = data.enabled;
     updateAutoApproveBtn();
@@ -1419,14 +1414,9 @@ async function syncAutoQueue() {
 }
 
 
-// Reset auto-queue to OFF on page load/refresh instead of restoring server state
 async function fetchAutoQueue() {
   try {
-    const res = await fetch('/api/auto-queue', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: false }),
-    });
+    const res = await fetch('/api/auto-queue');
     const data = await res.json();
     autoQueueEnabled = data.enabled;
     updateStartBtn();
